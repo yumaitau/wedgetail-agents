@@ -97,8 +97,10 @@ function WaitFor($desc, [scriptblock]$match, $seconds = 120) {
 }
 function Status { & $exe status --json | ConvertFrom-Json }
 function AppEvent($text) {
-    eventcreate /T INFORMATION /ID 100 /L APPLICATION /SO WedgetailAgentE2E /D "$text" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'eventcreate failed' }
+    if (-not [Diagnostics.EventLog]::SourceExists('WedgetailAgentE2E')) {
+        [Diagnostics.EventLog]::CreateEventSource('WedgetailAgentE2E', 'Application')
+    }
+    [Diagnostics.EventLog]::WriteEntry('WedgetailAgentE2E', $text, 'Information', 100)
 }
 
 Section 'Least privilege, configuration and enrolment'
