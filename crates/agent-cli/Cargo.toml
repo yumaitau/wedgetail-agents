@@ -20,10 +20,15 @@ agent-config.workspace = true
 agent-core.workspace = true
 ctrlc = { version = "3.5", features = ["termination"] }
 log.workspace = true
+rpassword.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+windows.workspace = true
 windows-service.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
 
 [lints]
 workspace = true

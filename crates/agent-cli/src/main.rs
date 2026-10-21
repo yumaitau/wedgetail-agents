@@ -1,17 +1,23 @@
 //! `wedgetail-agent`: collect host logs and ship them to Wedgetail.
 
-// Only the Windows service glue under `os/` may contain `unsafe` (from a macro expansion).
+// Only the Windows glue under `os/` may contain `unsafe`: the service entry macro and the DPAPI
+// and file ACL FFI.
 #![deny(unsafe_code)]
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use agent_config::AgentConfig;
+use agent_core::enrolment::RotationOptions;
 use agent_core::telemetry::{AGENT_VERSION, STATUS_FILE};
-use agent_core::{Agent, FileCredential, Stop};
+use agent_core::{Agent, CredentialStore, Stop};
 use serde_json::Value;
 
+mod enrol;
+#[cfg(target_os = "macos")]
+mod keychain;
 mod logger;
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -22,18 +28,27 @@ Usage: wedgetail-agent <command> [options]
 
 Commands:
   run            Run the agent in the foreground (the service manager runs this)
-  enrol          Enrol this host with Wedgetail
+  enrol          Enrol this host with Wedgetail (run as root or an administrator)
   check-config   Validate agent.toml and rules.d, then exit
-  status         Show the running agent's last status
+  status         Show enrolment and the running agent's last status
   version        Print the version
 
 Options:
-  --config <path>  agent.toml location (default: the OS default path)
-  --json           status: print the raw status JSON
-  --service        run: run as a Windows service (set by the service installer)
+  --config <path>    agent.toml location (default: the OS default path)
+  --json             status: print the raw status JSON
+  --service          run: run as a Windows service (set by the service installer)
+  --endpoint <url>   enrol: ingest URL (default: endpoint in agent.toml)
+  --token-stdin      enrol: read the token from standard input even if it is a terminal
+  --force            enrol: replace an existing enrolment
+
+The enrolment token is never accepted as an argument. enrol reads it from
+WEDGETAIL_ENROL_TOKEN, else from standard input when that is not a terminal,
+else from a prompt that does not echo:
+  wedgetail-agent enrol < token.txt
 
 Environment:
-  WEDGETAIL_LOG    error, warn, info (default) or debug
+  WEDGETAIL_LOG          error, warn, info (default) or debug
+  WEDGETAIL_ENROL_TOKEN  enrol: the enrolment token
 ";
 
 #[derive(Debug, Default)]
@@ -42,6 +57,9 @@ struct Args {
     config: Option<PathBuf>,
     json: bool,
     service: bool,
+    endpoint: Option<String>,
+    token_stdin: bool,
+    force: bool,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -51,9 +69,19 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--config" => parsed.config = Some(args.next().ok_or("--config needs a path")?.into()),
             "--json" => parsed.json = true,
             "--service" => parsed.service = true,
+            "--endpoint" => {
+                parsed.endpoint = Some(args.next().ok_or("--endpoint needs a URL")?);
+            }
+            "--token-stdin" => parsed.token_stdin = true,
+            "--force" => parsed.force = true,
             "-h" | "--help" | "help" => parsed.command = "help".into(),
             "-V" | "--version" => parsed.command = "version".into(),
-            flag if flag.starts_with('-') => return Err(format!("unknown option {flag}")),
+            // Checked before the generic arms so a secret is never echoed in an error.
+            secret if enrol::is_secret_arg(secret) => return Err(enrol::TOKEN_IN_ARGV.into()),
+            flag if flag.starts_with('-') => {
+                let name = flag.split('=').next().unwrap_or(flag);
+                return Err(format!("unknown option {name}"));
+            }
             command if parsed.command.is_empty() => parsed.command = command.to_owned(),
             other => return Err(format!("unexpected argument {other:?}")),
         }
@@ -64,6 +92,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
 fn main() -> ExitCode {
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,
+        // A token on the command line gets its own message, not the usage text.
+        Err(e) if e == enrol::TOKEN_IN_ARGV => return fail(&e),
         Err(e) => return fail(&format!("{e}\n\n{USAGE}")),
     };
     let config_path = args
@@ -76,11 +106,7 @@ fn main() -> ExitCode {
             logger::init_stderr();
             run(&config_path)
         }
-        "enrol" | "enroll" => Err(
-            "enrolment is not available in this build yet. It will read the enrolment token \
-             from stdin or WEDGETAIL_ENROL_TOKEN, never from the command line."
-                .into(),
-        ),
+        "enrol" | "enroll" => enrol_command(&config_path, &args),
         "check-config" => check_config(&config_path),
         "status" => status(&config_path, args.json),
         "version" => {
@@ -110,6 +136,11 @@ fn out(text: &str) {
 }
 
 #[allow(clippy::print_stderr)]
+fn warn(message: &str) {
+    eprintln!("wedgetail-agent: warning: {message}");
+}
+
+#[allow(clippy::print_stderr)]
 fn fail(message: &str) -> ExitCode {
     eprintln!("wedgetail-agent: {message}");
     ExitCode::FAILURE
@@ -121,12 +152,75 @@ fn load(config_path: &Path) -> Result<AgentConfig, String> {
 
 /// Build the agent for a loaded config. Shared by `run` and the Windows service.
 fn build_agent(config: AgentConfig) -> Result<Agent, String> {
-    // Enrolment (a later release) replaces this with OS secure storage; the file is the Linux
-    // layout and works everywhere in the meantime.
-    let credential = Arc::new(FileCredential {
-        path: config.state_dir.join("credential"),
-    });
-    Agent::new(config, credential).map_err(|e| e.to_string())
+    let store = credential_store(&config.state_dir);
+    Agent::new(config, store.clone())
+        .map(|agent| agent.with_rotation(store, RotationOptions::default()))
+        .map_err(|e| e.to_string())
+}
+
+/// Where this OS keeps the host credential: a 0600 file in the state directory on Linux (and
+/// other Unix), DPAPI on Windows, the System keychain on macOS.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn credential_store(state_dir: &Path) -> Arc<dyn CredentialStore> {
+    Arc::new(agent_core::FileCredential {
+        path: state_dir.join("credential"),
+    })
+}
+
+#[cfg(windows)]
+fn credential_store(state_dir: &Path) -> Arc<dyn CredentialStore> {
+    Arc::new(os::windows::dpapi::DpapiCredential {
+        path: state_dir.join("credential.dpapi"),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn credential_store(_state_dir: &Path) -> Arc<dyn CredentialStore> {
+    Arc::new(keychain::KeychainCredential::system())
+}
+
+fn enrol_command(config_path: &Path, args: &Args) -> Result<(), String> {
+    let config = AgentConfig::load(config_path);
+    let (endpoint, state_dir) = match (&args.endpoint, config) {
+        (Some(endpoint), Ok(config)) => {
+            let endpoint = endpoint.trim_end_matches('/').to_owned();
+            agent_config::validate_endpoint(&endpoint).map_err(|e| e.to_string())?;
+            if config.endpoint_base() != endpoint {
+                warn(&format!(
+                    "{} sends to {}; set endpoint = \"{endpoint}\" there so the agent uses \
+                     this enrolment",
+                    config_path.display(),
+                    config.endpoint_base()
+                ));
+            }
+            (endpoint, config.state_dir)
+        }
+        (Some(endpoint), Err(_)) => (
+            endpoint.trim_end_matches('/').to_owned(),
+            agent_config::paths::default_state_dir(),
+        ),
+        (None, Ok(config)) => (config.endpoint_base().to_owned(), config.state_dir),
+        (None, Err(e)) => {
+            return Err(format!(
+                "{e}\nSet endpoint in agent.toml or pass --endpoint <url>."
+            ));
+        }
+    };
+    agent_config::validate_endpoint(&endpoint).map_err(|e| e.to_string())?;
+    let store = credential_store(&state_dir);
+    let message = enrol::enrol(store.as_ref(), &endpoint, &state_dir, args.force, || {
+        let stdin = std::io::stdin();
+        let is_terminal = stdin.is_terminal();
+        enrol::read_token(
+            args.token_stdin,
+            std::env::var(enrol::TOKEN_ENV).ok(),
+            &mut stdin.lock(),
+            is_terminal,
+            &mut || rpassword::prompt_password("Enrolment token (not shown): "),
+        )
+    })?;
+    out(&message);
+    Ok(())
 }
 
 fn run(config_path: &Path) -> Result<(), String> {
@@ -181,6 +275,14 @@ fn status(config_path: &Path, json: bool) -> Result<(), String> {
         Ok(config) => config.state_dir,
         Err(_) => agent_config::paths::default_state_dir(),
     };
+    let enrolment = enrol::status(
+        &state_dir,
+        credential_store(&state_dir).as_ref(),
+        agent_core::enrolment::now_s(),
+    );
+    if !json {
+        out(&enrol::format_status(&enrolment));
+    }
     let path = state_dir.join(STATUS_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -188,12 +290,14 @@ fn status(config_path: &Path, json: bool) -> Result<(), String> {
             path.display()
         )
     })?;
+    let mut s: Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     if json {
-        out(text.trim_end());
-        return Ok(());
+        s["enrolment"] = enrolment;
+        out(&serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?);
+    } else {
+        out(&format_status(&s));
     }
-    let s: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    out(&format_status(&s));
     Ok(())
 }
 
@@ -272,6 +376,34 @@ mod tests {
         assert!(args(&["run", "--config"]).is_err());
         assert!(args(&["run", "--insecure"]).is_err());
         assert!(args(&["run", "extra"]).is_err());
+        let a = args(&[
+            "enrol",
+            "--endpoint",
+            "https://ingest.example.com",
+            "--token-stdin",
+            "--force",
+        ])
+        .expect("ok");
+        assert_eq!(a.endpoint.as_deref(), Some("https://ingest.example.com"));
+        assert!(a.token_stdin && a.force);
+        assert!(args(&["enrol", "--endpoint"]).is_err());
+    }
+
+    #[test]
+    fn refuses_tokens_in_argv_without_echoing_them() {
+        let token = "wge_0123456789az_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO-_";
+        for argv in [
+            vec!["enrol", "--token", token],
+            vec!["enrol", &format!("--token={token}")],
+            vec!["enrol", token],
+            vec![&format!("--unknown={token}"), "enrol"],
+        ] {
+            let err = args(&argv).expect_err("refused");
+            assert_eq!(err, enrol::TOKEN_IN_ARGV, "{argv:?}");
+            assert!(!err.contains(token));
+        }
+        let err = args(&["--bogus=secret-value"]).expect_err("unknown");
+        assert_eq!(err, "unknown option --bogus");
     }
 
     #[test]

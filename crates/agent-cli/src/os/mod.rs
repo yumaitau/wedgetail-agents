@@ -1,4 +1,5 @@
-//! OS service glue. The only place in this crate where `unsafe` is allowed, and only because
-//! the `windows-service` entry point macro expands to an `unsafe` block.
+//! Windows glue: the service entry point and the DPAPI credential store. The only place in
+//! this crate where `unsafe` is allowed: the `windows-service` entry point macro expands to an
+//! `unsafe` block, and DPAPI and ACL calls are FFI. Each `unsafe` block has a `SAFETY` note.
 
 pub mod windows;
