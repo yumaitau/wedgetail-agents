@@ -147,7 +147,10 @@ fn golden_files() {
     let parsed = macos_bsm::parse_praudit(
         &read(&fixtures().join("bsm/praudit.xml")),
         &table,
-        &trail.classes,
+        &macos_bsm::EventFilter {
+            classes: trail.classes.clone(),
+            exclude: trail.exclude_events.clone(),
+        },
     );
     let events = parsed
         .records

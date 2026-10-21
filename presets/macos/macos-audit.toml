@@ -9,3 +9,6 @@ schema_version = 1
 id = "macos-audit.trail"
 type = "macos_bsm"
 classes = ["lo", "aa", "ad", "ex"]
+# mac_syscall(2) is class ad but is the policy-module call path of the sandbox and code
+# signing: thousands of records a minute (several hundred a second on GitHub's runners).
+exclude_events = ["AUE_MAC_SYSCALL"]

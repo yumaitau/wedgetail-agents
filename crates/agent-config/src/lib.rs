@@ -517,6 +517,10 @@ pub struct Rule {
     /// event in the trail.
     #[serde(default)]
     pub classes: Vec<String>,
+    /// `macos_bsm`: audit event names to drop even when their class is kept, for example
+    /// `AUE_MAC_SYSCALL`.
+    #[serde(default)]
+    pub exclude_events: Vec<String>,
 
     /// Where the rule was defined. Set by the loader.
     #[serde(skip)]

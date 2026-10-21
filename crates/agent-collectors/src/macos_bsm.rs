@@ -47,23 +47,32 @@ pub struct Frames {
     /// The complete records, back to back, ready for `praudit`.
     pub data: Vec<u8>,
     pub records: usize,
+    /// Complete records left out because `keep` refused their event.
+    pub filtered: usize,
     /// Bytes of the buffer used up: records plus skipped bytes. The offset advances by this.
     pub consumed: usize,
     /// Bytes skipped because they were not a valid record.
     pub skipped: usize,
 }
 
-/// Split up to `max_records` complete records off the start of `buf`. Bytes that are not a
-/// valid record are skipped until the next valid header. A record that is valid so far but
-/// not complete yet ends the scan; it is read again on the next call.
-pub fn frame_records(buf: &[u8], max_records: usize) -> Frames {
+/// Split up to `max_records` complete records off the start of `buf`, keeping those whose
+/// event number (from the header) `keep` accepts, so `praudit` only converts wanted records.
+/// Bytes that are not a valid record are skipped until the next valid header. A record that
+/// is valid so far but not complete yet ends the scan; it is read again on the next call.
+pub fn frame_records(buf: &[u8], max_records: usize, keep: impl Fn(u32) -> bool) -> Frames {
     let mut f = Frames::default();
     let mut pos = 0;
     while pos < buf.len() && f.records < max_records {
         match record_len(&buf[pos..]) {
             Some(Ok(len)) => {
-                f.data.extend_from_slice(&buf[pos..pos + len]);
-                f.records += 1;
+                // Every header token starts: id, length (4), version (1), event type (2).
+                let event = u32::from(u16::from_be_bytes([buf[pos + 6], buf[pos + 7]]));
+                if keep(event) {
+                    f.data.extend_from_slice(&buf[pos..pos + len]);
+                    f.records += 1;
+                } else {
+                    f.filtered += 1;
+                }
                 pos += len;
             }
             Some(Err(())) => {
@@ -134,9 +143,27 @@ impl EventTable {
         self.0.len()
     }
 
+    /// Whether `filter` keeps event number `event`.
+    pub fn keeps(&self, event: u32, filter: &EventFilter) -> bool {
+        let Some((name, classes)) = self.0.get(&event) else {
+            // Unknown numbers have no class; kept only without a class filter.
+            return filter.classes.is_empty();
+        };
+        !filter.exclude.contains(name)
+            && (filter.classes.is_empty() || classes.iter().any(|c| filter.classes.contains(c)))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
+
+/// Which audit events a rule keeps: any of `classes` (all when empty), minus the event names in
+/// `exclude`.
+#[derive(Debug, Clone, Default)]
+pub struct EventFilter {
+    pub classes: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 /// One converted audit record.
@@ -152,7 +179,7 @@ pub struct BsmRecord {
 #[derive(Debug, Default)]
 pub struct Parsed {
     pub records: Vec<BsmRecord>,
-    /// Records outside the wanted classes.
+    /// Records the filter refused.
     pub filtered: usize,
     /// Records that could not be converted (no valid time, malformed XML).
     pub errors: usize,
@@ -192,9 +219,8 @@ impl Record {
     }
 }
 
-/// Convert `praudit -x -r` output. Records whose event is in none of `classes` are counted as
-/// filtered (every record is kept when `classes` is empty).
-pub fn parse_praudit(xml: &str, table: &EventTable, classes: &[String]) -> Parsed {
+/// Convert `praudit -x -r` output. Records `filter` refuses are counted as filtered.
+pub fn parse_praudit(xml: &str, table: &EventTable, filter: &EventFilter) -> Parsed {
     let mut out = Parsed::default();
     let mut reader = quick_xml::Reader::from_str(xml);
     // Depth 0: document, 1: <audit>, 2: <record>, 3: token, 4: arg/env.
@@ -217,12 +243,12 @@ pub fn parse_praudit(xml: &str, table: &EventTable, classes: &[String]) -> Parse
             Event::Empty(e) => {
                 open(&mut record, depth + 1, &e);
                 if depth + 1 == 2 {
-                    finish(&mut record, table, classes, &mut out);
+                    finish(&mut record, table, filter, &mut out);
                 }
             }
             Event::End(_) => {
                 if depth == 2 {
-                    finish(&mut record, table, classes, &mut out);
+                    finish(&mut record, table, filter, &mut out);
                 }
                 depth = depth.saturating_sub(1);
             }
@@ -321,7 +347,7 @@ fn text(record: &mut Option<Record>, depth: usize, s: &str) {
     }
 }
 
-fn finish(record: &mut Option<Record>, table: &EventTable, classes: &[String], out: &mut Parsed) {
+fn finish(record: &mut Option<Record>, table: &EventTable, filter: &EventFilter, out: &mut Parsed) {
     let Some(r) = record.take() else { return };
     let attr = |k: &str| {
         r.attrs
@@ -342,7 +368,7 @@ fn finish(record: &mut Option<Record>, table: &EventTable, classes: &[String], o
         Some((name, c)) => (name.clone(), c.clone()),
         None => (event_id.to_string(), Vec::new()),
     };
-    if !classes.is_empty() && !event_classes.iter().any(|c| classes.contains(c)) {
+    if !table.keeps(event_id, filter) {
         out.filtered += 1;
         return;
     }
@@ -452,7 +478,7 @@ mod collector {
 
     use serde_json::Value;
 
-    use super::{EventTable, frame_records, next_trail, parse_praudit, trail_start};
+    use super::{EventFilter, EventTable, frame_records, next_trail, parse_praudit, trail_start};
     use crate::{Batch, Checkpoint, Collector, CollectorError, EventTemplate, FilePosition};
 
     pub const AUDIT_DIR: &str = "/var/audit";
@@ -499,7 +525,7 @@ mod collector {
     #[derive(Debug)]
     pub struct BsmTrail {
         template: EventTemplate,
-        classes: Vec<String>,
+        filter: EventFilter,
         dir: PathBuf,
         event_file: PathBuf,
         table: EventTable,
@@ -510,20 +536,20 @@ mod collector {
     }
 
     impl BsmTrail {
-        pub fn new(template: EventTemplate, classes: Vec<String>) -> Self {
-            Self::with_paths(template, classes, AUDIT_DIR.into(), AUDIT_EVENT.into())
+        pub fn new(template: EventTemplate, filter: EventFilter) -> Self {
+            Self::with_paths(template, filter, AUDIT_DIR.into(), AUDIT_EVENT.into())
         }
 
         /// A trail directory and event table other than the system ones (tests).
         pub fn with_paths(
             template: EventTemplate,
-            classes: Vec<String>,
+            filter: EventFilter,
             dir: PathBuf,
             event_file: PathBuf,
         ) -> Self {
             Self {
                 template,
-                classes,
+                filter,
                 dir,
                 event_file,
                 table: EventTable::default(),
@@ -590,7 +616,10 @@ mod collector {
                 }
                 filled += n;
             }
-            let frames = frame_records(&self.buf[..filled], max_events.max(1));
+            let (table, filter) = (&self.table, &self.filter);
+            let frames = frame_records(&self.buf[..filled], max_events.max(1), |event| {
+                table.keeps(event, filter)
+            });
             if frames.skipped > 0 {
                 log::warn!(
                     "{}: skipped {} bytes that are not audit records",
@@ -605,7 +634,7 @@ mod collector {
                 return Ok(frames.consumed > 0);
             }
             let xml = run_praudit(&frames.data)?;
-            let parsed = parse_praudit(&xml, &self.table, &self.classes);
+            let parsed = parse_praudit(&xml, &self.table, &self.filter);
             if parsed.errors > 0 {
                 log::warn!(
                     "{}: {} audit records could not be converted",

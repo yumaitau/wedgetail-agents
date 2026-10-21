@@ -458,6 +458,14 @@
             "type": "string"
           }
         },
+        "exclude_events": {
+          "description": "`macos_bsm`: audit event names to drop even when their class is kept, for example\n`AUE_MAC_SYSCALL`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "exclude_match": {
           "description": "Drop events matching any of these regular expressions.",
           "type": "array",

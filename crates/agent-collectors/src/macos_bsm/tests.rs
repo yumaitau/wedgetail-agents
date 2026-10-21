@@ -13,38 +13,67 @@ const TRAIL: &[u8] = include_bytes!("../../../../presets/macos/fixtures/bsm/trai
 const XML: &str = include_str!("../../../../presets/macos/fixtures/bsm/praudit.xml");
 const AUDIT_EVENT: &str = include_str!("../../../../presets/macos/fixtures/bsm/audit_event");
 
-fn preset_classes() -> Vec<String> {
-    ["lo", "aa", "ad", "ex"].map(String::from).to_vec()
+fn preset() -> EventFilter {
+    EventFilter {
+        classes: ["lo", "aa", "ad", "ex"].map(String::from).to_vec(),
+        exclude: vec!["AUE_MAC_SYSCALL".into()],
+    }
+}
+
+fn all(_: u32) -> bool {
+    true
 }
 
 #[test]
 fn frames_whole_records() {
-    let f = frame_records(TRAIL, usize::MAX);
+    let f = frame_records(TRAIL, usize::MAX, all);
     assert_eq!(f.records, 10);
     assert_eq!((f.consumed, f.skipped), (TRAIL.len(), 0));
     assert_eq!(f.data, TRAIL);
     // The cap stops at a record boundary.
-    let f = frame_records(TRAIL, 3);
+    let f = frame_records(TRAIL, 3, all);
     assert_eq!(f.records, 3);
     assert_eq!(f.consumed, f.data.len());
-    assert_eq!(frame_records(&TRAIL[f.consumed..], usize::MAX).records, 7);
+    assert_eq!(
+        frame_records(&TRAIL[f.consumed..], usize::MAX, all).records,
+        7
+    );
+}
+
+#[test]
+fn frames_only_wanted_events() {
+    let f = frame_records(TRAIL, usize::MAX, |e| e == 45028);
+    assert_eq!((f.records, f.filtered, f.consumed), (2, 8, TRAIL.len()));
+    let table = EventTable::parse(AUDIT_EVENT);
+    let preset = preset();
+    let kept: Vec<bool> = [45028, 23, 72, 65000]
+        .iter()
+        .map(|&e| table.keeps(e, &preset))
+        .collect();
+    assert_eq!(kept, [true, true, false, false]);
+    let no_sudo = EventFilter {
+        exclude: vec!["AUE_sudo".into()],
+        ..EventFilter::default()
+    };
+    assert!(!table.keeps(45028, &no_sudo));
+    assert!(table.keeps(65000, &no_sudo));
 }
 
 #[test]
 fn partial_record_waits_for_the_rest() {
-    let all = frame_records(TRAIL, usize::MAX);
-    let first = frame_records(TRAIL, 1).consumed;
+    let whole = frame_records(TRAIL, usize::MAX, all);
+    let first = frame_records(TRAIL, 1, all).consumed;
     for cut in [1, 3, 5, first - 1] {
-        let f = frame_records(&TRAIL[..cut], usize::MAX);
+        let f = frame_records(&TRAIL[..cut], usize::MAX, all);
         assert_eq!(
             (f.records, f.consumed, f.skipped),
             (0, 0, 0),
             "cut at {cut}"
         );
     }
-    let f = frame_records(&TRAIL[..TRAIL.len() - 2], usize::MAX);
+    let f = frame_records(&TRAIL[..TRAIL.len() - 2], usize::MAX, all);
     assert_eq!(f.records, 9);
-    assert!(f.consumed < all.consumed);
+    assert!(f.consumed < whole.consumed);
     assert_eq!(f.skipped, 0);
 }
 
@@ -53,26 +82,26 @@ fn garbage_is_skipped_to_the_next_record() {
     let mut buf = b"\x00\x99junk\x14\x00\x00\x00\x02".to_vec();
     let junk = buf.len();
     buf.extend_from_slice(TRAIL);
-    let f = frame_records(&buf, usize::MAX);
+    let f = frame_records(&buf, usize::MAX, all);
     assert_eq!((f.records, f.skipped, f.consumed), (10, junk, buf.len()));
     assert_eq!(f.data, TRAIL);
 
     // A header whose trailer does not match is not a record.
-    let first = frame_records(TRAIL, 1).consumed;
+    let first = frame_records(TRAIL, 1, all).consumed;
     let mut bad = TRAIL.to_vec();
     bad[first - 1] ^= 0xff;
-    let f = frame_records(&bad, usize::MAX);
+    let f = frame_records(&bad, usize::MAX, all);
     assert_eq!(f.records, 9);
     assert_eq!(f.skipped, first);
 
     // An absurd length is not waited for, nor one longer than a record can be but shorter
     // than the collector's read.
-    let f = frame_records(b"\x14\xff\xff\xff\xff\x0b\x00\x00", usize::MAX);
+    let f = frame_records(b"\x14\xff\xff\xff\xff\x0b\x00\x00", usize::MAX, all);
     assert_eq!((f.records, f.skipped, f.consumed), (0, 8, 8));
     let mut buf = vec![0x14];
     buf.extend_from_slice(&(300u32 * 1024).to_be_bytes());
     buf.extend_from_slice(TRAIL);
-    let f = frame_records(&buf, usize::MAX);
+    let f = frame_records(&buf, usize::MAX, all);
     assert_eq!((f.records, f.skipped), (10, 5));
 }
 
@@ -130,7 +159,7 @@ fn event_table() {
 #[test]
 fn converts_praudit_xml() {
     let table = EventTable::parse(AUDIT_EVENT);
-    let parsed = parse_praudit(XML, &table, &preset_classes());
+    let parsed = parse_praudit(XML, &table, &preset());
     assert_eq!(parsed.errors, 0);
     // The file read (`fr`) and the unknown event are outside lo, aa, ad and ex.
     assert_eq!(parsed.filtered, 2);
@@ -177,7 +206,7 @@ fn converts_praudit_xml() {
     assert_eq!(exec["classes"], json!(["pc", "ex"]));
 
     // No class filter: everything, and unknown events by number.
-    let all = parse_praudit(XML, &table, &[]);
+    let all = parse_praudit(XML, &table, &EventFilter::default());
     assert_eq!((all.records.len(), all.filtered), (10, 0));
     assert_eq!(all.records[9].fields["event"], "65000");
     assert_eq!(all.records[9].fields["classes"], json!([]));
@@ -197,7 +226,7 @@ fn hostile_xml() {
     let xml = doc(&format!(
         "{HEAD}<text>a&lt;/text&gt;&lt;/record&gt; &amp;amp; &#x41; &bogus; \u{1}\u{fffd}\nend</text></record>"
     ));
-    let p = parse_praudit(&xml, &table, &[]);
+    let p = parse_praudit(&xml, &table, &EventFilter::default());
     assert_eq!((p.records.len(), p.errors), (1, 0));
     assert_eq!(
         p.records[0].fields["text"],
@@ -208,7 +237,7 @@ fn hostile_xml() {
     let xml = doc(&format!(
         "{HEAD}<text>ok</text></record>\n<record version=\"153\" event=\"1\" time=\"9\" >"
     ));
-    let p = parse_praudit(&xml, &table, &[]);
+    let p = parse_praudit(&xml, &table, &EventFilter::default());
     assert_eq!((p.records.len(), p.errors), (1, 1));
 
     // No time, a bad time, no event: counted, not sent.
@@ -217,14 +246,14 @@ fn hostile_xml() {
         r#"<record version="11" event="45028" time="soon" ></record>"#,
         r#"<record version="11" time="1" ></record>"#,
     ));
-    let p = parse_praudit(&xml, &table, &[]);
+    let p = parse_praudit(&xml, &table, &EventFilter::default());
     assert_eq!((p.records.len(), p.errors), (0, 3));
 
     // Environment variables: names only, values never leave the host.
     let xml = doc(&format!(
         "{HEAD}<exec_env><env>AWS_SECRET_ACCESS_KEY=abc123</env><env>PATH=/usr/bin</env><env>BARE</env></exec_env></record>"
     ));
-    let p = parse_praudit(&xml, &table, &[]);
+    let p = parse_praudit(&xml, &table, &EventFilter::default());
     assert_eq!(
         p.records[0].fields["exec_env"],
         json!(["AWS_SECRET_ACCESS_KEY", "PATH", "BARE"])
@@ -234,14 +263,16 @@ fn hostile_xml() {
     let p = parse_praudit(
         "<?xml version='1.0'?><!DOCTYPE a [<!ENTITY x 'y'>]><audit></audit>",
         &table,
-        &[],
+        &EventFilter::default(),
     );
     assert_eq!((p.records.len(), p.errors), (0, 1));
 
     // Not XML at all, and empty output.
     for junk in ["", "garbage", "<audit><record", "</audit></audit>"] {
         assert!(
-            parse_praudit(junk, &table, &[]).records.is_empty(),
+            parse_praudit(junk, &table, &EventFilter::default())
+                .records
+                .is_empty(),
             "{junk}"
         );
     }
@@ -257,7 +288,7 @@ fn huge_records_are_cut_not_dropped() {
         "{HEAD}<exec_args>{args}</exec_args>{texts}<text>{}</text></record>",
         "y".repeat(MAX_LINE_BYTES * 3)
     ));
-    let p = parse_praudit(&xml, &table, &[]);
+    let p = parse_praudit(&xml, &table, &EventFilter::default());
     assert_eq!(p.records.len(), 1);
     let r = &p.records[0];
     assert!(r.truncated);
@@ -278,7 +309,7 @@ fn huge_records_are_cut_not_dropped() {
     let many: String = (0..20_000)
         .map(|_| format!("{HEAD}<text>x</text></record>\n"))
         .collect();
-    let p = parse_praudit(&doc(&many), &table, &preset_classes());
+    let p = parse_praudit(&doc(&many), &table, &preset());
     assert_eq!((p.records.len(), p.errors), (20_000, 0));
 }
 
@@ -315,8 +346,8 @@ mod os_tests {
     #[test]
     fn real_praudit_matches_the_fixture() {
         let table = EventTable::parse(AUDIT_EVENT);
-        let fixture = parse_praudit(XML, &table, &[]);
-        let live = parse_praudit(&praudit(TRAIL), &table, &[]);
+        let fixture = parse_praudit(XML, &table, &EventFilter::default());
+        let live = parse_praudit(&praudit(TRAIL), &table, &EventFilter::default());
         assert_eq!(live.errors, 0);
         assert_eq!(live.records, fixture.records);
     }
@@ -325,7 +356,7 @@ mod os_tests {
         let mut out = Vec::new();
         let mut rest = TRAIL;
         for i in 0..10 {
-            let f = frame_records(rest, 1);
+            let f = frame_records(rest, 1, all);
             if range.contains(&i) {
                 out.extend_from_slice(&f.data);
             }
@@ -378,14 +409,7 @@ mod os_tests {
         link(&dir, "20261021080000.not_terminated");
 
         let template = EventTemplate::new("macos-audit.trail", "macos.bsm", None, &BTreeMap::new());
-        let new = || {
-            BsmTrail::with_paths(
-                template.clone(),
-                preset_classes(),
-                dir.clone(),
-                events.clone(),
-            )
-        };
+        let new = || BsmTrail::with_paths(template.clone(), preset(), dir.clone(), events.clone());
         // No checkpoint: starts at the end, so the two existing records are not sent.
         let mut c = new();
         c.start(None).expect("start");

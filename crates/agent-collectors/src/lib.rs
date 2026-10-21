@@ -115,7 +115,10 @@ pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, 
         #[cfg(target_os = "macos")]
         RuleKind::MacosBsm => Ok(Box::new(macos_bsm::BsmTrail::new(
             template,
-            rule.classes.clone(),
+            macos_bsm::EventFilter {
+                classes: rule.classes.clone(),
+                exclude: rule.exclude_events.clone(),
+            },
         ))),
         #[cfg(windows)]
         RuleKind::Wineventlog => {

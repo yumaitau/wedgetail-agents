@@ -92,7 +92,10 @@ pub(crate) fn rule(rule: &Rule, protected: &[PathBuf]) -> Vec<String> {
         ("predicate", rule.predicate.is_some()),
         ("level", rule.level.is_some()),
     ];
-    let bsm_only = [("classes", !rule.classes.is_empty())];
+    let bsm_only = [
+        ("classes", !rule.classes.is_empty()),
+        ("exclude_events", !rule.exclude_events.is_empty()),
+    ];
     for (kind, fields) in [
         (RuleKind::File, &file_only[..]),
         (RuleKind::Journald, &journald_only[..]),
@@ -139,6 +142,20 @@ pub(crate) fn rule(rule: &Rule, protected: &[PathBuf]) -> Vec<String> {
                 if !valid {
                     err(format!(
                         "classes: {class:?} is not an audit class name (lo, aa, ad, ex, ...)"
+                    ));
+                }
+            }
+            if rule.exclude_events.len() > 256 {
+                err("exclude_events: at most 256".into());
+            }
+            for event in &rule.exclude_events {
+                let valid = (1..=64).contains(&event.len())
+                    && event
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                if !valid {
+                    err(format!(
+                        "exclude_events: {event:?} is not an audit event name (AUE_...)"
                     ));
                 }
             }
