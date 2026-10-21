@@ -88,23 +88,23 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
-      - run: cargo build --locked --release
+      - run: cargo build --locked --release --workspace
       - name: Import the Authenticode certificate
         if: env.WINDOWS_CERT_PFX_BASE64 != ''
         run: |
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-      - name: Sign the exe
+      - name: Sign the exe and the MSI custom action DLL
         if: env.WINDOWS_CERT_PFX_BASE64 != ''
         run: |
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
-          & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target\release\wedgetail-agent.exe
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target\release\wedgetail-agent.exe target\release\wedgetail_msi.dll
       - run: dotnet tool install --global wix --version 5.0.2
       - name: Build the MSI
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           wix build packaging/windows/wedgetail-agent.wxs -arch x64 `
             -d Version=$env:VERSION -d BinPath=target/release/wedgetail-agent.exe `
-            -d ConfigPath=packaging/common/agent.toml -o "dist/wedgetail-agent-$env:VERSION-x86_64.msi"
+            -d CaPath=target/release/wedgetail_msi.dll -d ConfigPath=packaging/common/agent.toml -o "dist/wedgetail-agent-$env:VERSION-x86_64.msi"
           Compress-Archive -Path target/release/wedgetail-agent.exe -DestinationPath "dist/wedgetail-agent-$env:VERSION-x86_64-pc-windows-msvc.zip"
       - name: Sign the MSI
         if: env.WINDOWS_CERT_PFX_BASE64 != ''

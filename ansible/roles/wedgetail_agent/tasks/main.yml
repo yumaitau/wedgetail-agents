@@ -1,0 +1,46 @@
+---
+# Arguments are checked against meta/argument_specs.yml before these tasks run.
+
+- name: Gather the facts the role needs
+  ansible.builtin.setup:
+    gather_subset: [min]
+  when: ansible_facts['os_family'] is not defined or ansible_facts['architecture'] is not defined
+
+- name: Check the platform is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+    fail_msg: >-
+      The wedgetail_agent role supports Debian/Ubuntu and RHEL-family hosts on x86_64 and
+      aarch64; this host is {{ ansible_facts['os_family'] }} on {{ ansible_facts['architecture'] }}.
+    quiet: true
+
+- name: Install, configure, enrol and start the agent
+  when: wedgetail_agent_state == 'present'
+  block:
+    - name: Install the package
+      ansible.builtin.include_tasks: install.yml
+
+    - name: Configure the agent
+      ansible.builtin.include_tasks: configure.yml
+      when: wedgetail_agent_manage_config | bool
+
+    - name: Check the configuration
+      ansible.builtin.command:
+        argv: [wedgetail-agent, check-config, --config, "{{ wedgetail_agent__config_path }}"]
+      changed_when: false
+
+    - name: Enrol the host
+      ansible.builtin.include_tasks: enrol.yml
+      when: wedgetail_agent_enrol_token | length > 0
+
+    - name: Enable and start the service
+      ansible.builtin.systemd_service:
+        name: "{{ wedgetail_agent__service }}"
+        enabled: "{{ wedgetail_agent_service_enabled | bool }}"
+        state: "{{ wedgetail_agent_service_state }}"
+
+- name: Remove the agent
+  ansible.builtin.include_tasks: absent.yml
+  when: wedgetail_agent_state == 'absent'

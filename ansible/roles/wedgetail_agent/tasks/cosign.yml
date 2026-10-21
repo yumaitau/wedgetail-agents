@@ -1,0 +1,54 @@
+---
+- name: Look for cosign on the host
+  ansible.builtin.command:
+    argv: [sh, -c, command -v cosign]
+  register: wedgetail_agent__cosign
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Require cosign
+  ansible.builtin.assert:
+    that: wedgetail_agent__cosign.rc == 0
+    fail_msg: wedgetail_agent_cosign_verify is 'always' but cosign is not on this host's PATH.
+    quiet: true
+  when: wedgetail_agent_cosign_verify == 'always'
+
+- name: Verify with cosign
+  when: wedgetail_agent__cosign.rc == 0
+  block:
+    - name: Download the Sigstore bundle
+      ansible.builtin.get_url:
+        url: "{{ wedgetail_agent_release_url }}/{{ wedgetail_agent__package }}.sigstore.json"
+        dest: "{{ wedgetail_agent__package_path }}.sigstore.json"
+        owner: root
+        group: root
+        mode: "0600"
+      when: wedgetail_agent_package_src | length == 0
+
+    - name: Copy the Sigstore bundle from the controller
+      ansible.builtin.copy:
+        src: >-
+          {{ wedgetail_agent_cosign_bundle_src
+             if wedgetail_agent_cosign_bundle_src | length > 0
+             else wedgetail_agent_package_src ~ '.sigstore.json' }}
+        dest: "{{ wedgetail_agent__package_path }}.sigstore.json"
+        owner: root
+        group: root
+        mode: "0600"
+      when: wedgetail_agent_package_src | length > 0
+
+    - name: Check the signature (cosign verify-blob)
+      ansible.builtin.command:
+        argv:
+          - "{{ wedgetail_agent__cosign.stdout | trim }}"
+          - verify-blob
+          - --bundle
+          - "{{ wedgetail_agent__package_path }}.sigstore.json"
+          - --certificate-identity-regexp
+          - "{{ wedgetail_agent_cosign_identity_regexp }}"
+          - --certificate-oidc-issuer
+          - "{{ wedgetail_agent_cosign_oidc_issuer }}"
+          - "{{ wedgetail_agent__package_path }}"
+      changed_when: false
+      when: not ansible_check_mode

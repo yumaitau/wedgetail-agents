@@ -1,0 +1,158 @@
+---
+argument_specs:
+  main:
+    short_description: Install, configure and enrol the Wedgetail host agent
+    description:
+      - Installs the wedgetail-agent .deb or .rpm from a release URL or a file on the
+        controller, after checking its SHA-256 against SHA256SUMS (and its Sigstore
+        signature when cosign is on the host).
+      - Writes /etc/wedgetail-agent/agent.toml and rules.d files from variables, checks them
+        with C(wedgetail-agent check-config), enrols the host once with a token given on
+        standard input, and enables and starts the systemd service.
+      - With I(wedgetail_agent_state=absent), stops and removes the agent (and with
+        I(wedgetail_agent_purge), its configuration, state and service account).
+    author: Yuma IT
+    options:
+      wedgetail_agent_state:
+        type: str
+        choices: [present, absent]
+        default: present
+        description: Install and run the agent, or remove it.
+      wedgetail_agent_purge:
+        type: bool
+        default: false
+        description:
+          - With I(wedgetail_agent_state=absent), also delete /etc/wedgetail-agent, the state
+            directory (credential, unsent events) and the wedgetail-agent user and group.
+          - Revoke the host in the Wedgetail console first.
+      wedgetail_agent_version:
+        type: str
+        default: "0.1.0"
+        description: Release to install (without the leading v).
+      wedgetail_agent_package_revision:
+        type: str
+        default: "1"
+        description: Package revision in the file name (C(wedgetail-agent_<version>-<revision>_amd64.deb)).
+      wedgetail_agent_release_url:
+        type: str
+        default: https://github.com/yumaitau/wedgetail-agents/releases/download/v{{ wedgetail_agent_version }}
+        description:
+          - Base URL holding the packages, SHA256SUMS and the .sigstore.json bundles. Point it
+            at a mirror for hosts without internet access.
+      wedgetail_agent_package_src:
+        type: str
+        default: ""
+        description:
+          - Path on the controller to a .deb or .rpm to copy instead of downloading one. Its
+            SHA-256 must be in I(wedgetail_agent_sha256sums_src) or I(wedgetail_agent_sha256).
+      wedgetail_agent_sha256sums_src:
+        type: str
+        default: ""
+        description: SHA256SUMS on the controller for I(wedgetail_agent_package_src); defaults to the file next to it.
+      wedgetail_agent_sha256:
+        type: str
+        default: ""
+        description: Expected SHA-256 of the package. When set, SHA256SUMS is not read.
+      wedgetail_agent_download_dir:
+        type: path
+        default: /var/cache/wedgetail-agent-install
+        description: Directory on the host (root only, 0700) where the package is kept for idempotent runs.
+      wedgetail_agent_cosign_verify:
+        type: str
+        choices: [auto, always, never]
+        default: auto
+        description:
+          - C(auto) runs C(cosign verify-blob) when cosign is on the host's PATH, C(always)
+            fails without it, C(never) checks the SHA-256 only.
+      wedgetail_agent_cosign_bundle_src:
+        type: str
+        default: ""
+        description: Sigstore bundle on the controller for I(wedgetail_agent_package_src); defaults to C(<package>.sigstore.json) next to it.
+      wedgetail_agent_cosign_identity_regexp:
+        type: str
+        default: ^https://github.com/yumaitau/wedgetail-agents/
+        description: Certificate identity the signature must have (the release workflow).
+      wedgetail_agent_cosign_oidc_issuer:
+        type: str
+        default: https://token.actions.githubusercontent.com
+        description: OIDC issuer of the signing certificate.
+      wedgetail_agent_manage_config:
+        type: bool
+        default: true
+        description: Write agent.toml and rules.d. Set to false to manage them yourself.
+      wedgetail_agent_config_template:
+        type: str
+        default: agent.toml.j2
+        description: Template for agent.toml (your own, from your playbook's templates directory, replaces the role's).
+      wedgetail_agent_endpoint:
+        type: str
+        default: ""
+        description: Your Wedgetail ingest URL (https only), from the Host agents page. Required with the role's template.
+      wedgetail_agent_presets:
+        type: raw
+        default: [auto]
+        description: C(auto), a list of preset ids, or an empty list for none (C([agent] presets)).
+      wedgetail_agent_disable_rules:
+        type: list
+        elements: str
+        default: []
+        description: Rule ids to switch off (C([agent] disable_rules)).
+      wedgetail_agent_buffer_max_mb:
+        type: int
+        default: 256
+        description: Disk buffer cap in MiB (C([agent] buffer_max_mb)).
+      wedgetail_agent_settings:
+        type: dict
+        default: {}
+        description: Other C([agent]) settings, such as C(max_open_files) or C(state_dir).
+      wedgetail_agent_rules:
+        type: list
+        elements: dict
+        default: []
+        description: Rules written as C([[rule]]) tables in agent.toml; keys and values as in docs/rules.md.
+      wedgetail_agent_config_extra:
+        type: str
+        default: ""
+        description: TOML text added to agent.toml after C([agent]), for example C([limits]) or C([heartbeat]) tables.
+      wedgetail_agent_rules_d:
+        type: dict
+        default: {}
+        description:
+          - Files for /etc/wedgetail-agent/rules.d. Each key is a file name without C(.toml);
+            each value is a list of rules (as in I(wedgetail_agent_rules)) or TOML text.
+      wedgetail_agent_rules_d_exclusive:
+        type: bool
+        default: false
+        description: Delete C(*.toml) files in rules.d that are not in I(wedgetail_agent_rules_d).
+      wedgetail_agent_enrol_token:
+        type: str
+        default: ""
+        no_log: true
+        description:
+          - Enrolment token from the Wedgetail console (C(wge_...)). Keep it in Ansible Vault or
+            a secrets lookup. Given to C(wedgetail-agent enrol) on standard input with
+            C(no_log). Empty skips enrolment.
+      wedgetail_agent_enrol_force:
+        type: bool
+        default: false
+        description: Enrol again even if the host is enrolled (C(enrol --force)). Set it for one run only.
+      wedgetail_agent_enrol_pipelining:
+        type: bool
+        default: true
+        description:
+          - Use pipelining for the enrol task so its arguments (the token) are sent over the
+            connection rather than written to a temporary module file on the host. Needs
+            sudo without C(requiretty).
+      wedgetail_agent_state_dir:
+        type: path
+        default: /var/lib/wedgetail-agent
+        description: Agent state directory, where enrol writes enrolment.json (change it only with C(state_dir) in I(wedgetail_agent_settings)).
+      wedgetail_agent_service_enabled:
+        type: bool
+        default: true
+        description: Start the service at boot.
+      wedgetail_agent_service_state:
+        type: str
+        choices: [started, stopped]
+        default: started
+        description: State of the service after the role runs.

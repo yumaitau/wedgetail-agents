@@ -1,0 +1,21 @@
+{% import 'toml.j2' as toml %}
+# {{ ansible_managed }}
+# Wedgetail agent configuration, written by the wedgetail_agent Ansible role. Every setting
+# and rule field: https://github.com/yumaitau/wedgetail-agents/blob/main/docs/rules.md
+schema_version = 1
+
+[agent]
+endpoint = {{ toml.value(wedgetail_agent_endpoint) }}
+buffer_max_mb = {{ wedgetail_agent_buffer_max_mb | int }}
+presets = {{ toml.value(wedgetail_agent_presets) }}
+{% if wedgetail_agent_disable_rules | length > 0 %}
+disable_rules = {{ toml.value(wedgetail_agent_disable_rules) }}
+{% endif %}
+{% for k in wedgetail_agent_settings %}
+{{ toml.key(k) }} = {{ toml.value(wedgetail_agent_settings[k]) }}
+{% endfor %}
+{% if wedgetail_agent_config_extra | length > 0 %}
+
+{{ wedgetail_agent_config_extra }}
+{% endif %}
+{{ toml.rules(wedgetail_agent_rules) }}

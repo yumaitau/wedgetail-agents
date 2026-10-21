@@ -57,6 +57,20 @@ The enrolment token is never accepted on the command line. See
 [docs/enrolment.md](docs/enrolment.md) for enrolment, where the host credential is stored on
 each OS, rotation and revocation.
 
+### Fleet installs
+
+- **Ansible** (Linux): the [`wedgetail_agent`](ansible/roles/wedgetail_agent/README.md) role
+  in `ansible/roles` installs the package after checking it against `SHA256SUMS` (and cosign
+  when present), writes `agent.toml` and `rules.d` from variables, enrols once with the token
+  on standard input under `no_log`, and runs the service; `wedgetail_agent_state: absent`
+  removes it. Tested in CI against a real systemd host.
+- **Windows MSI** (Intune, Group Policy, msiexec): public properties `ENDPOINT`, `PRESETS`,
+  `ENROLTOKEN` (hidden, given to `enrol` on standard input) and `ADD_EVENT_LOG_READERS`
+  (default `1`), so no separate `agent.toml` is needed:
+  `msiexec /i wedgetail-agent-<v>-x86_64.msi /qn ENDPOINT=https://... PRESETS=auto`. See
+  [packaging/windows/README.md](packaging/windows/README.md), including what a token on the
+  msiexec command line exposes.
+
 ## Configuration
 
 | | Config | State (buffer, checkpoints, status, enrolment; the credential on Linux and Windows) |
@@ -138,7 +152,8 @@ child process. Linux and Windows figures on real hosts are still to be measured.
   crash so the server can drop the repeat. At most the unacknowledged batch is resent.
 - **Unsafe code** is forbidden except in the small Windows FFI modules
   (`crates/agent-collectors/src/os/windows`, `crates/agent-cli/src/os/windows`: event log,
-  service entry point, DPAPI and file ACLs), each with `SAFETY` notes.
+  service entry point, DPAPI and file ACLs; `crates/agent-msi/src/msi.rs`: the MSI custom
+  actions), each with `SAFETY` notes.
 
 Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
@@ -148,14 +163,19 @@ Rust 1.95 (pinned in `rust-toolchain.toml`).
 
 ```sh
 cargo build --release
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+`crates/agent-msi` (a Windows DLL) is not a default member: build it on Windows with
+`cargo build --release --workspace` or `-p agent-msi`.
 
 Static Linux build: `rustup target add x86_64-unknown-linux-musl`, install `musl-tools`, then
 `cargo build --release --target x86_64-unknown-linux-musl`. Packages: `cargo deb -p agent-cli`,
 `cargo generate-rpm -p crates/agent-cli`, `packaging/macos/build-pkg.sh`, and
-`wix build packaging/windows/wedgetail-agent.wxs` (see the CI workflow for exact commands).
+`wix build packaging/windows/wedgetail-agent.wxs` with `-d CaPath=target/release/wedgetail_msi.dll`
+(see [packaging/windows/README.md](packaging/windows/README.md) and the CI workflow for exact
+commands).
 
 ## Layout
 
@@ -167,9 +187,13 @@ crates/agent-core        rule pipeline (filter, sample, rate limit, redact, pars
                          Linux credential file
 crates/agent-cli         the wedgetail-agent binary, enrol command, Windows service glue,
                          DPAPI (Windows) and System keychain (macOS) credential stores
+crates/agent-msi         wedgetail_msi.dll: MSI custom actions (ENDPOINT, PRESETS, ENROLTOKEN,
+                         Event Log Readers)
+ansible/                 the wedgetail_agent Ansible role and its CI playbook
 docs/                    enrolment.md: enrolment, credential storage, rotation, revocation;
                          rules.md: configuration and rule reference
-packaging/               systemd unit, launchd plist, WiX source, deb/rpm scripts, pkg builder
+packaging/               systemd unit, launchd plist, WiX source (windows/README.md: MSI
+                         properties), deb/rpm scripts, pkg builder
 schema/rules.v1.json     JSON Schema for configuration files (generated, checked in CI)
 ```
 

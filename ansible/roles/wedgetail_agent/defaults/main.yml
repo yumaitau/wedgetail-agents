@@ -1,0 +1,51 @@
+---
+# Every variable is described in meta/argument_specs.yml and README.md.
+
+# present: install, configure, enrol and start. absent: stop and remove the package.
+wedgetail_agent_state: present
+# With state absent: also delete /etc/wedgetail-agent, the state directory (credential,
+# buffer, checkpoints) and the service account. Revoke the host in the console first.
+wedgetail_agent_purge: false
+
+# Package. Downloaded from the release, or copied from the controller with
+# wedgetail_agent_package_src. Either way it is checked against SHA256SUMS before install.
+wedgetail_agent_version: "0.1.0"
+wedgetail_agent_package_revision: "1"
+wedgetail_agent_release_url: "https://github.com/yumaitau/wedgetail-agents/releases/download/v{{ wedgetail_agent_version }}"
+wedgetail_agent_package_src: ""
+# SHA256SUMS on the controller for wedgetail_agent_package_src (default: next to it).
+wedgetail_agent_sha256sums_src: ""
+# The expected SHA-256 of the package; set it to skip SHA256SUMS.
+wedgetail_agent_sha256: ""
+wedgetail_agent_download_dir: /var/cache/wedgetail-agent-install
+
+# Sigstore: auto verifies when cosign is on the host, always requires it, never skips it.
+wedgetail_agent_cosign_verify: auto
+wedgetail_agent_cosign_bundle_src: ""
+wedgetail_agent_cosign_identity_regexp: "^https://github.com/yumaitau/wedgetail-agents/"
+wedgetail_agent_cosign_oidc_issuer: https://token.actions.githubusercontent.com
+
+# agent.toml ([agent] table and rules) and rules.d.
+wedgetail_agent_manage_config: true
+wedgetail_agent_config_template: agent.toml.j2
+wedgetail_agent_endpoint: ""
+wedgetail_agent_presets: [auto]
+wedgetail_agent_disable_rules: []
+wedgetail_agent_buffer_max_mb: 256
+wedgetail_agent_settings: {}
+wedgetail_agent_rules: []
+wedgetail_agent_config_extra: ""
+wedgetail_agent_rules_d: {}
+wedgetail_agent_rules_d_exclusive: false
+
+# Enrolment. Supply the token from Ansible Vault or a lookup, never in a playbook in plain
+# text. Skipped when the host is already enrolled (enrolment.json exists) unless forced.
+wedgetail_agent_enrol_token: ""
+wedgetail_agent_enrol_force: false
+# Module arguments (the token) go over the connection's standard input, not a temporary file.
+wedgetail_agent_enrol_pipelining: true
+wedgetail_agent_state_dir: /var/lib/wedgetail-agent
+
+# Service.
+wedgetail_agent_service_enabled: true
+wedgetail_agent_service_state: started

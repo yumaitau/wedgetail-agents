@@ -1,0 +1,8 @@
+{% import 'toml.j2' as toml %}
+# {{ ansible_managed }}
+{% if item.value is string %}
+{{ item.value }}
+{% else %}
+schema_version = 1
+{{ toml.rules(item.value) }}
+{% endif %}

@@ -1,0 +1,26 @@
+[package]
+name = "agent-msi"
+description = "Windows Installer custom actions for the wedgetail-agent MSI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# wedgetail_msi.dll, embedded in the MSI (packaging/windows/wedgetail-agent.wxs). On other
+# targets only the tests of the agent.toml editing are of use.
+[lib]
+name = "wedgetail_msi"
+crate-type = ["cdylib"]
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_NetworkManagement_NetManagement", "Win32_System_ApplicationInstallationAndServicing"] }
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,49 @@
+---
+- name: Read the services
+  ansible.builtin.service_facts:
+
+- name: Stop and disable the service
+  ansible.builtin.systemd_service:
+    name: "{{ wedgetail_agent__service }}"
+    state: stopped
+    enabled: false
+  when: (wedgetail_agent__service ~ '.service') in ansible_facts['services']
+
+- name: Remove the .deb
+  ansible.builtin.apt:
+    name: wedgetail-agent
+    state: absent
+    purge: "{{ wedgetail_agent_purge | bool }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Remove the .rpm
+  ansible.builtin.dnf:
+    name: wedgetail-agent
+    state: absent
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Remove the downloaded package
+  ansible.builtin.file:
+    path: "{{ wedgetail_agent_download_dir }}"
+    state: absent
+
+- name: Purge configuration, state and the service account
+  when: wedgetail_agent_purge | bool
+  block:
+    - name: Remove the configuration and state directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ wedgetail_agent__config_dir }}"
+        - "{{ wedgetail_agent_state_dir }}"
+
+    - name: Remove the service user
+      ansible.builtin.user:
+        name: "{{ wedgetail_agent__user }}"
+        state: absent
+
+    - name: Remove the service group
+      ansible.builtin.group:
+        name: "{{ wedgetail_agent__user }}"
+        state: absent
