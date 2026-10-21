@@ -56,8 +56,13 @@ if ($LASTEXITCODE -ne 0) { throw 'certificate generation failed' }
 Import-Certificate -FilePath "$work\ca.pem" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
 $server = Start-Process python -ArgumentList "$PSScriptRoot\mock-ingest.py", 8443, "$work\leaf.pem", "$work\leaf.key", $received `
     -PassThru -NoNewWindow -RedirectStandardError "$work\mock.log"
-Start-Sleep -Seconds 2
-if ($server.HasExited) { Get-Content "$work\mock.log"; throw 'mock ingest did not start' }
+$deadline = (Get-Date).AddSeconds(60)
+while ($true) {
+    if ($server.HasExited) { Get-Content "$work\mock.log"; throw 'mock ingest did not start' }
+    try { [Net.Sockets.TcpClient]::new('localhost', 8443).Close(); break } catch {}
+    if ((Get-Date) -gt $deadline) { Get-Content "$work\mock.log"; throw 'mock ingest is not listening' }
+    Start-Sleep -Milliseconds 500
+}
 
 # Received lines, parsed once each; heartbeats (rule_id "agent") are left out.
 $script:events = [System.Collections.Generic.List[object]]::new()
