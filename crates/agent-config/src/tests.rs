@@ -227,6 +227,9 @@ fn every_rule_field_accepts_valid_values() {
         ("macos_unified", "level = \"info\""),
         ("macos_unified", "level = \"default\""),
         ("macos_unified", "level = \"debug\""),
+        ("macos_bsm", ""),
+        ("macos_bsm", "classes = [\"lo\", \"aa\", \"ad\", \"ex\"]"),
+        ("macos_bsm", "exclude_events = [\"AUE_MAC_SYSCALL\"]"),
         ("journald", "include_match = ['sshd']\nsample_rate = 0.5"),
     ];
     for (kind, extra) in cases {
@@ -377,6 +380,28 @@ fn every_rule_field_rejects_invalid_values() {
             "macos_unified",
             "priority_max = 3",
             "priority_max is for type \"journald\"",
+        ),
+        (
+            "macos_unified",
+            "classes = [\"lo\"]",
+            "classes is for type \"macos_bsm\"",
+        ),
+        ("macos_bsm", "classes = [\"LO\"]", "audit class name"),
+        ("macos_bsm", "classes = [\"\"]", "audit class name"),
+        (
+            "macos_bsm",
+            "exclude_events = [\"AUE x\"]",
+            "audit event name",
+        ),
+        (
+            "file",
+            "exclude_events = [\"AUE_x\"]",
+            "exclude_events is for type \"macos_bsm\"",
+        ),
+        (
+            "macos_bsm",
+            "predicate = 'x'",
+            "predicate is for type \"macos_unified\"",
         ),
     ];
     for (kind, extra, want) in cases {
@@ -732,6 +757,8 @@ fn json_schema_is_current() {
         "level",
         "units",
         "priority_max",
+        "classes",
+        "exclude_events",
     ] {
         assert!(rule.get(field).is_some(), "schema has no rule.{field}");
     }

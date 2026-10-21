@@ -24,6 +24,7 @@ pub mod file_tail;
 pub mod journald;
 pub mod lastlog;
 pub mod lines;
+pub mod macos_bsm;
 pub mod macos_unified;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod subprocess;
@@ -110,6 +111,14 @@ pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, 
             template,
             rule.predicate.clone(),
             rule.level.unwrap_or_default(),
+        ))),
+        #[cfg(target_os = "macos")]
+        RuleKind::MacosBsm => Ok(Box::new(macos_bsm::BsmTrail::new(
+            template,
+            macos_bsm::EventFilter {
+                classes: rule.classes.clone(),
+                exclude: rule.exclude_events.clone(),
+            },
         ))),
         #[cfg(windows)]
         RuleKind::Wineventlog => {

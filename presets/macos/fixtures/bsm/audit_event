@@ -1,0 +1,17 @@
+23:AUE_EXECVE:execve(2):pc,ex
+72:AUE_OPEN_R:open(2) - read:fr
+43131:AUE_MAC_EXECVE:mac_execve(2):ex,pc
+43190:AUE_POSIX_SPAWN:posix_spawn(2):pc
+44901:AUE_SESSION_START:session start:aa
+44903:AUE_SESSION_END:session end:aa
+6152:AUE_login:login - local:lo
+6153:AUE_logout:logout - local:lo
+6159:AUE_su:su(1):lo
+6207:AUE_create_user:create user:ad
+6208:AUE_modify_user:modify user:ad
+6209:AUE_delete_user:delete user:ad
+32800:AUE_openssh:OpenSSH login:lo
+45021:AUE_lw_login:loginwindow login:lo
+45023:AUE_auth_user:user authentication:aa
+45025:AUE_ssauthorize:SecSrvr AuthEngine:aa
+45028:AUE_sudo:sudo(1):aa

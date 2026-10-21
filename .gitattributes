@@ -1,3 +1,4 @@
 # Fixtures are compared byte for byte (binary utmp/lastlog records, event XML, golden wire lines).
 presets/linux/fixtures/** -text
 presets/windows/fixtures/** -text
+presets/macos/fixtures/** -text

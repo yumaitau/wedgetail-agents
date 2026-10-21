@@ -1,0 +1,133 @@
+# macos-core: high-value macOS security events, on by default on every Mac.
+#
+# Each macos_unified rule is one `log stream` process. The predicates are written so the log
+# system filters on its side: every alternative is anchored by `process ==` or
+# `subsystem ==` (never `IN {...}` or a bare `eventMessage` test, which make `log stream`
+# receive and test every message on the system), and every rule streams default-level
+# messages only (info-level streaming costs CPU in diagnosticd). Field reference, volumes and
+# the CPU measurements: docs/presets/macos.md.
+schema_version = 1
+
+# Logins, privilege use and remote access: sudo, su, sshd, login, Authorization Services
+# (authd), Open Directory password checks, SecurityAgent prompts and Screen Sharing sessions.
+# loginwindow is not here: on macOS 26 it logs application lifecycle chatter at default
+# level and no login or lock lines; console logins are in the audit trail (macos-audit).
+[[rule]]
+id = "macos-core.auth"
+type = "macos_unified"
+level = "default"
+predicate = '''
+eventType == "logEvent" AND NOT eventMessage BEGINSWITH "Too many groups requested" AND (
+  (process == "sudo" AND eventMessage CONTAINS " ; ")
+  OR process == "su" OR process == "login"
+  OR process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"
+  OR process == "SecurityAgent"
+  OR subsystem == "com.apple.Authorization"
+  OR (subsystem == "com.apple.opendirectoryd" AND (category == "auth" OR category == "policy"))
+  OR (process == "screensharingd" AND (eventMessage BEGINSWITH "Authentication:"
+      OR eventMessage BEGINSWITH "accept new screen sharing connection"
+      OR eventMessage BEGINSWITH "closing index"))
+)
+'''
+
+# Gatekeeper decisions and prompts, XProtect detections and remediator results, and code
+# that fails AMFI signature validation. Default level: com.apple.syspolicy.exec logs well
+# over 100 info messages a second while apps launch.
+[[rule]]
+id = "macos-core.gatekeeper"
+type = "macos_unified"
+level = "default"
+predicate = '''
+eventType == "logEvent" AND (
+  (subsystem == "com.apple.syspolicy.exec" AND (eventMessage BEGINSWITH "GK evaluateScanResult"
+      OR eventMessage BEGINSWITH "Prompt shown"))
+  OR (subsystem == "com.apple.xprotect" AND (eventMessage CONTAINS[c] "detect"
+      OR eventMessage CONTAINS[c] "malware"))
+  OR (subsystem == "com.apple.XProtectFramework.PluginAPI" AND eventMessage CONTAINS "status_message"
+      AND NOT eventMessage CONTAINS "NoThreatDetected")
+  OR (process == "XProtect" AND subsystem == "com.apple.XProtectFramework")
+  OR (process == "amfid" AND eventMessage CONTAINS " not valid: ")
+)
+'''
+
+# Privacy (TCC) decisions by tccd. The system tccd logs four AUTHREQ_* lines at default
+# level for every access check (tens of thousands a day), nearly all preflight checks by
+# entitled Apple processes. Kept: results that were not granted by entitlement (user consent,
+# user settings, MDM, denials), AUTHREQ_SUBJECT (written for some requests only, naming the
+# requesting app), non-preflight requests, and changes to the access database. Info-level access checks are
+# left out for CPU (see docs/presets/macos.md).
+[[rule]]
+id = "macos-core.tcc"
+type = "macos_unified"
+level = "default"
+predicate = '''
+process == "tccd" AND subsystem == "com.apple.TCC" AND (
+  (eventMessage BEGINSWITH "AUTHREQ_RESULT" AND NOT eventMessage CONTAINS "authReason=11,")
+  OR eventMessage BEGINSWITH "AUTHREQ_SUBJECT"
+  OR (eventMessage BEGINSWITH "AUTHREQ_CTX" AND eventMessage CONTAINS "preflight=no")
+  OR eventMessage CONTAINS "Access Record"
+)
+'''
+
+# Persistence: login items, launch agents and daemons registered with Background Task
+# Management (macOS 13+). launchd hands every new launchd plist to BTM, so this is also where
+# job loads show up.
+[[rule]]
+id = "macos-core.persistence"
+type = "macos_unified"
+level = "default"
+predicate = '''
+eventType == "logEvent" AND subsystem == "com.apple.backgroundtaskmanagement"
+'''
+
+# Configuration profiles and MDM commands.
+[[rule]]
+id = "macos-core.mdm"
+type = "macos_unified"
+level = "default"
+predicate = '''
+eventType == "logEvent" AND subsystem == "com.apple.ManagedClient"
+  AND (process == "mdmclient" OR process == "ManagedClient") AND (
+  eventMessage CONTAINS "configuration profile:"
+  OR eventMessage CONTAINS "Processing server request"
+  OR eventMessage CONTAINS[c] "enrolled"
+  OR messageType == error OR messageType == fault
+)
+'''
+
+# Application Firewall (socketfilterfw): state changes and flows that were not simply allowed.
+[[rule]]
+id = "macos-core.firewall"
+type = "macos_unified"
+level = "default"
+predicate = '''
+process == "socketfilterfw" AND subsystem == "com.apple.ALF.ApplicationFirewall" AND NOT (
+  eventMessage BEGINSWITH "Handle flow"
+  OR eventMessage BEGINSWITH "Updating app rule"
+  OR eventMessage BEGINSWITH "Updating path for app"
+  OR eventMessage BEGINSWITH "Found matching app"
+  OR eventMessage BEGINSWITH "Found known filter app"
+  OR eventMessage BEGINSWITH "ApplicationFirewall::AFGet"
+  OR eventMessage BEGINSWITH "AF_CMD_GLOBAL_STATE getAppFirewallState"
+  OR eventMessage ENDSWITH "verdict: 1"
+  OR eventMessage ENDSWITH "verdict: allowVerdict"
+)
+'''
+
+# Package installs (installer, installd, softwareupdated). Continuation lines start with
+# whitespace.
+[[rule]]
+id = "macos-core.install"
+type = "file"
+source_type = "macos.install"
+paths = ["/var/log/install.log"]
+multiline = { pattern = '^\s', match = "after" }
+parser = "regex"
+regex = '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2}(?::?\d{2})?) (?P<hostname>\S+) (?P<app_name>[^\[:\s]+)(?:\[(?P<proc_id>\d+)\])?: (?s:(?P<message>.*))$'
+
+# The legacy syslog file, where syslogd still writes it.
+[[rule]]
+id = "macos-core.syslog"
+type = "file"
+paths = ["/var/log/system.log"]
+parser = "syslog_rfc3164"

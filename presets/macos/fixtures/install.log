@@ -1,0 +1,11 @@
+2026-10-21 19:20:01+11 mac-01 installer[4687]: Product archive /Users/alice/Downloads/ExampleTool-2.1.pkg trustLevel=350
+2026-10-21 19:20:01+11 mac-01 installer[4687]: Administrator authorization granted.
+2026-10-21 19:20:01+11 mac-01 installer[4687]: Starting installation:
+2026-10-21 19:20:01+11 mac-01 installd[1281]: PackageKit: Adding client PKInstallDaemonClient pid=4687, uid=0 (/usr/sbin/installer)
+2026-10-21 19:20:01+11 mac-01 installd[1281]: PackageKit: ----- Begin install -----
+2026-10-21 19:20:01+11 mac-01 installd[1281]: PackageKit: packages=(
+	    "PKLeopardPackage <id=com.example.tool, version=2.1, url=file:///Users/alice/Downloads/ExampleTool-2.1.pkg#ExampleTool.pkg>"
+	)
+2026-10-21 19:20:02+11 mac-01 package_script_service[4690]: PackageKit: Executing script "postinstall" in /tmp/PKInstallSandbox.a1B2c3/Scripts/com.example.tool.x9Y8z7
+2026-10-21 19:20:05+11 mac-01 installd[1281]: Installed "ExampleTool" (2.1)
+2026-10-21 19:20:05+11 mac-01 installd[1281]: PackageKit: Registered bundle file:///Applications/ExampleTool.app/ for uid 0

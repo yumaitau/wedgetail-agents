@@ -14,7 +14,8 @@
     <!--
         Runs as root: macOS `log stream` and `log show` refuse non-admin users, and adding a
         service account to the admin group would also grant it sudo. The agent opens no
-        listener, runs no remote commands and only executes /usr/bin/log.
+        listener, runs no remote commands and only executes /usr/bin/log and, for the
+        macos-audit preset, /usr/sbin/praudit.
     -->
     <key>UserName</key>
     <string>root</string>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Sample MDM profile: Privacy Preferences Policy Control (PPPC) granting the Wedgetail agent
+    Full Disk Access (SystemPolicyAllFiles). Install it through your MDM (Jamf Pro, Intune,
+    Kandji, Mosyle, ...): macOS only honours PPPC payloads delivered by a user-approved or
+    automated-enrolment MDM, not ones installed by hand.
+
+    Before deploying, replace REPLACE_WITH_TEAM_ID in CodeRequirement with the team id of the
+    Developer ID certificate that signed the agent. macOS checks the running binary against this
+    requirement; with the placeholder nothing matches and no access is granted. After installing
+    a signed build, the exact requirement is printed by:
+
+        codesign --display --requirements - /usr/local/bin/wedgetail-agent
+
+    An unsigned (development or CI) build has no stable code requirement and cannot be granted
+    access this way. See docs/presets/macos.md ("Full Disk Access and MDM").
+
+    PayloadOrganization, PayloadIdentifier and the UUIDs are examples: set your own.
+-->
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDescription</key>
+            <string>Full Disk Access for the Wedgetail agent.</string>
+            <key>PayloadDisplayName</key>
+            <string>Wedgetail agent privacy preferences</string>
+            <key>PayloadIdentifier</key>
+            <string>com.example.wedgetail-agent.pppc.tcc</string>
+            <key>PayloadType</key>
+            <string>com.apple.TCC.configuration-profile-policy</string>
+            <key>PayloadUUID</key>
+            <string>26AC2812-9390-4487-A1D2-BB8F7EE87E23</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>Services</key>
+            <dict>
+                <key>SystemPolicyAllFiles</key>
+                <array>
+                    <dict>
+                        <key>Authorization</key>
+                        <string>Allow</string>
+                        <key>CodeRequirement</key>
+                        <string>identifier "au.com.yumait.wedgetail-agent" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "REPLACE_WITH_TEAM_ID"</string>
+                        <key>Comment</key>
+                        <string>Wedgetail agent launchd daemon (au.com.yumait.wedgetail-agent)</string>
+                        <key>Identifier</key>
+                        <string>/usr/local/bin/wedgetail-agent</string>
+                        <key>IdentifierType</key>
+                        <string>path</string>
+                        <key>StaticCode</key>
+                        <false/>
+                    </dict>
+                </array>
+            </dict>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Grants the Wedgetail host agent Full Disk Access so it can read protected log sources.</string>
+    <key>PayloadDisplayName</key>
+    <string>Wedgetail agent</string>
+    <key>PayloadIdentifier</key>
+    <string>com.example.wedgetail-agent.pppc</string>
+    <key>PayloadOrganization</key>
+    <string>Example Organisation</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>75B9F748-AFB7-4C2B-9C3F-22BB261D0FF8</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>

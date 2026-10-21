@@ -247,8 +247,13 @@ jobs:
           if-no-files-found: error
 
   macos-pkg:
-    name: macos (pkg, unsigned)
-    runs-on: macos-latest
+    name: macos (pkg, unsigned, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 14 and 15 on Apple silicon, 15 on Intel, and the current release.
+        runner: [macos-14, macos-15, macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -277,8 +282,24 @@ jobs:
           sudo installer -pkg dist/wedgetail-agent-universal.pkg -target /
           lipo -archs /usr/local/bin/wedgetail-agent
           plutil -lint /Library/LaunchDaemons/au.com.yumait.wedgetail-agent.plist
+          plutil -lint packaging/macos/wedgetail-agent-pppc.mobileconfig
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
+          # Turn auditd on where this macOS still ships it (the runner is thrown away), so
+          # "auto" selects macos-audit and it reads a real trail.
+          if [ ! -f /etc/security/audit_control ] && [ -f /etc/security/audit_control.example ]; then
+            sudo cp /etc/security/audit_control.example /etc/security/audit_control
+          fi
+          # The classes macos-audit keeps; ex records every execve.
+          if [ -f /etc/security/audit_control ]; then
+            sudo sed -i '' -e 's/^flags:.*/flags:lo,aa,ad,ex/' -e 's/^naflags:.*/naflags:lo,aa,ad,ex/' /etc/security/audit_control
+          fi
+          # The launchd job ships disabled; enable and load it, then start auditing.
+          sudo launchctl enable system/com.apple.auditd || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist || true
+          sudo audit -i || true
+          sleep 2
+          sudo ls -l /var/audit || true
           sudo wedgetail-agent check-config
           sudo launchctl bootstrap system /Library/LaunchDaemons/au.com.yumait.wedgetail-agent.plist
           sleep 8
@@ -286,6 +307,47 @@ jobs:
           sudo cat /Library/Logs/Wedgetail/agent.log
           sudo wedgetail-agent status
           sudo wedgetail-agent status --json | grep -q '"state": "running"'
+          # "auto" presets as the root daemon: macos-core always, macos-audit when auditd has
+          # a trail. A real event: sudo logs its command line, which macos-core.auth buffers.
+          sw_vers
+          sudo wedgetail-agent status | grep -E 'macos-core.auth +running'
+          audit=false
+          if sudo test -e /var/audit/current; then
+            audit=true
+            sudo cat /etc/security/audit_control || true
+            sudo wedgetail-agent status | grep -E 'macos-audit.trail +running'
+          fi
+          sudo -k
+          sudo /usr/bin/true
+          sleep 10
+          # Read the buffered wire lines back and check for the two events.
+          sudo sh -c 'cat "/Library/Application Support/Wedgetail/state/buffer/"*.seg' > buffer.bin
+          sudo log show --last 3m --style syslog --predicate 'process == "sudo"' > sudo.log || true
+          python3 - "$audit" <<'PY'
+          import collections, json, re, sys
+          data = open("buffer.bin", "rb").read().decode("utf-8", "replace")
+          dec, events, i = json.JSONDecoder(), [], 0
+          while (i := data.find('{"v":1,', i)) >= 0:
+              try:
+                  ev, end = dec.raw_decode(data, i)
+                  events.append(ev)
+                  i = end
+              except ValueError:
+                  i += 1
+          print(collections.Counter(e["rule_id"] for e in events))
+          logged = "COMMAND=/usr/bin/true" in open("sudo.log").read()
+          sudo = [e for e in events if e["rule_id"] == "macos-core.auth"
+                  and "COMMAND=/usr/bin/true" in e["fields"].get("eventMessage", "")]
+          print("sudo command line in the unified log:", logged, "buffered:", len(sudo))
+          bsm = [e for e in events if e["rule_id"] == "macos-audit.trail"]
+          print("audit trail on:", sys.argv[1], "records:", collections.Counter(e["fields"]["event"] for e in bsm).most_common(15))
+          print("records mentioning /usr/bin/true:", sum("/usr/bin/true" in json.dumps(e["fields"]) for e in bsm))
+          # macOS 14 logs sudo command lines; 15 and later do not.
+          assert sudo or not logged, "sudo line not buffered"
+          # The trail is read live (the rule starts at its end) and mac_syscall is left out.
+          assert bsm or sys.argv[1] != "true", "no audit records buffered"
+          assert not any(e["fields"]["event"] == "AUE_MAC_SYSCALL" for e in bsm)
+          PY
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
@@ -300,6 +362,7 @@ jobs:
           sudo packaging/macos/uninstall.sh --purge
           test ! -e /usr/local/bin/wedgetail-agent
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.runner == 'macos-latest'
         with:
           name: macos-pkg
           path: dist/

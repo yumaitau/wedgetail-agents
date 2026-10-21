@@ -33,6 +33,7 @@ Contents:
 - [`type = "journald"`](#type--journald)
 - [`type = "wineventlog"`](#type--wineventlog)
 - [`type = "macos_unified"`](#type--macos_unified)
+- [`type = "macos_bsm"`](#type--macos_bsm)
 - [The event pipeline](#the-event-pipeline)
 - [Parsers](#parsers)
 - [Which files a rule may read](#which-files-a-rule-may-read)
@@ -170,9 +171,9 @@ rate_limit = { events_per_second = 500, burst = 2000 }
 | Field | Type | Default | Valid values and meaning |
 | --- | --- | --- | --- |
 | `id` | string | required | `^[a-z0-9][a-z0-9._-]{0,63}$`, unique. Sent as `rule_id`; used by `disable_rules`. |
-| `type` | string | required | `file`, `journald` (Linux), `wineventlog` (Windows), `macos_unified` (macOS). `command` is refused: the agent never runs commands. A type the OS does not support fails `check-config` on that OS. |
+| `type` | string | required | `file`, `journald` (Linux), `wineventlog` (Windows), `macos_unified` and `macos_bsm` (macOS). `command` is refused: the agent never runs commands. A type the OS does not support fails `check-config` on that OS. |
 | `enabled` | bool | `true` | `false` keeps the rule without running it. |
-| `source_type` | string | per type | 1 to 64 characters of `[A-Za-z0-9._-]`. Defaults: `file`, `journald`, `windows.eventlog`, `macos.unified`. |
+| `source_type` | string | per type | 1 to 64 characters of `[A-Za-z0-9._-]`. Defaults: `file`, `journald`, `windows.eventlog`, `macos.unified`, `macos.bsm`. |
 | `source_label` | string | none | 1 to 256 characters, no control characters. Sent as `attrs.source_label`. |
 | `tags` | table of strings | none | At most 32; keys 1 to 64 characters, values up to 256, no control characters. Sent as `attrs.tags`. |
 | `include_match` | list of regex | none | Keep only events matching at least one. At most 32, each at most 1,024 characters. |
@@ -321,6 +322,39 @@ level = "info"
 | `predicate` | string | none (everything) | A `log stream --predicate` filter, 1 to 4,096 characters. |
 | `level` | string | `"info"` | `default`, `info` or `debug` (very noisy): the least severe messages streamed. |
 
+`log stream` evaluates the predicate against every message at the chosen level, in its own
+process, and each `macos_unified` rule runs one `log stream`. Anchor every alternative of a
+predicate with `process ==` or `subsystem ==` (`OR` between such terms is fine): the log
+system then filters before the message reaches `log`. `process IN {...}`, or an
+`eventMessage` test that is not inside an anchored term, makes `log` receive and test every
+message on the system and costs several per cent of a core. The measurements behind this are in [the macOS preset guide](presets/macos.md#cpu).
+
+## `type = "macos_bsm"`
+
+macOS only. Reads the OpenBSM audit trail that auditd writes to `/var/audit` (following
+`/var/audit/current` across rotations, checkpointed by byte offset) and converts records with
+`/usr/sbin/praudit`. `fields` holds the event name, number and classes and one key per token;
+there is no `body`. The field reference is in [the macOS preset guide](presets/macos.md#macosbsm).
+
+```toml
+[[rule]]
+id = "mac-audit"
+type = "macos_bsm"
+classes = ["lo", "aa"]
+exclude_events = ["AUE_MAC_SYSCALL"]
+```
+
+| Field | Type | Default | Valid values and meaning |
+| --- | --- | --- | --- |
+| `classes` | list of strings | all | At most 32 audit class names from `/etc/security/audit_class` (`lo`, `aa`, `ad`, `ex`, ...). Only records whose event (per `/etc/security/audit_event`) is in one of them are sent. |
+| `exclude_events` | list of strings | none | At most 256 event names (`AUE_...`) to drop even when their class is kept. |
+
+Records are filtered by the event number in their header before they are converted, so
+left-out events cost almost nothing.
+
+What auditd writes to the trail is set by `flags` in `/etc/security/audit_control`; `classes`
+can only narrow it. Without a checkpoint the rule starts at the end of the current trail.
+
 ## The event pipeline
 
 Every event from a rule goes through these steps, in order, **before** it is written to the
@@ -435,6 +469,7 @@ reload), and `check-config` shows it as disabled.
 | OS | Presets |
 | --- | --- |
 | Linux | `linux-core`, `linux-auditd`, `linux-containers`: [docs/presets/linux.md](presets/linux.md) |
+| macOS | `macos-core`, `macos-audit` (`macos-es` is phase 2): [docs/presets/macos.md](presets/macos.md) |
 | Windows | `windows-security`, `windows-security-objects`, `windows-security-dc`, `windows-system`, `windows-powershell`, `windows-sysmon`, `windows-defender`, `windows-operational`, `windows-app-control`: [docs/presets/windows.md](presets/windows.md) |
 
 ## Compatibility

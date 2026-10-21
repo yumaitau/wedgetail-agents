@@ -38,7 +38,10 @@ install -m 644 "$HERE/$IDENTIFIER.plist" "$ROOT/Library/LaunchDaemons/$IDENTIFIE
 install -m 644 "$HERE/../common/agent.toml" "$ROOT/Library/Application Support/Wedgetail/agent.toml.example"
 
 if [ -n "${APPLE_APP_IDENTITY:-}" ]; then
-    codesign --force --options runtime --timestamp --sign "$APPLE_APP_IDENTITY" "$ROOT/usr/local/bin/wedgetail-agent"
+    # A fixed signing identifier keeps the code requirement in MDM PPPC profiles stable
+    # (wedgetail-agent-pppc.mobileconfig).
+    codesign --force --options runtime --timestamp --identifier "$IDENTIFIER" \
+        --sign "$APPLE_APP_IDENTITY" "$ROOT/usr/local/bin/wedgetail-agent"
 else
     echo "APPLE_APP_IDENTITY not set: binary is not signed"
 fi
