@@ -628,9 +628,14 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         std::thread::spawn(move || {
-            use std::io::Write;
+            use std::io::{Read, Write};
             for mut stream in listener.incoming().flatten() {
+                // Read the ClientHello before answering and wait for the client to hang up:
+                // closing with unread data makes Windows reset the connection instead.
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
                 let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+                while matches!(stream.read(&mut buf), Ok(n) if n > 0) {}
             }
         });
         let client = Client::new(&format!("https://{addr}")).expect("client");
