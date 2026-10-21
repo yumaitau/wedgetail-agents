@@ -1,0 +1,9 @@
+Oct 21 08:00:01 edge-01 authpriv.notice sshd[3101]: Accepted publickey for alice from 192.0.2.10 port 51000 ssh2: ED25519 SHA256:Kq3PZ0xS6wHc0WqgTn6E4l2c8pUo4nq9m3mJqfXo3y4
+Oct 21 08:00:02 edge-01 auth.info sshd[3105]: Failed password for root from 203.0.113.70 port 41000 ssh2
+Oct 21 08:00:03 edge-01 authpriv.notice sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/sbin/apk add tcpdump
+Oct 21 08:00:04 edge-01 auth.notice su: + pts/0 alice:root
+Oct 21 08:00:05 edge-01 daemon.info dhcpcd[2200]: eth0: leased 192.0.2.30 for 86400 seconds
+Oct 21 08:00:06 edge-01 kern.warn kernel: [  812.123456] traps: badapp[4100] general protection fault ip:7f3a2c1b0e10 sp:7ffd3c2a1b00 error:0 in libc.so[7f3a2c1a0000+9a000]
+Oct 21 08:00:07 edge-01 kern.info kernel: [  813.000001] eth0: link up
+Oct 21 08:00:08 edge-01 cron.info crond[2300]: USER root pid 4200 cmd run-parts /etc/periodic/15min
+Oct 21 08:00:09 edge-01 kern.warn kernel: [  814.200000] IN=eth0 OUT= MAC=02:42:ac:11:00:02:02:42:ac:11:00:03:08:00 SRC=203.0.113.80 DST=192.0.2.30 LEN=60 TOS=0x00 PREC=0x00 TTL=52 ID=0 DF PROTO=TCP SPT=40000 DPT=23 WINDOW=64240 RES=0x00 SYN URGP=0

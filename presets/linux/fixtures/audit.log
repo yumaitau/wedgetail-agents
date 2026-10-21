@@ -1,0 +1,33 @@
+type=SYSCALL msg=audit(1792569600.120:4567): arch=c000003e syscall=59 success=yes exit=0 a0=55d1c4a2b8f0 a1=55d1c4a2b950 a2=55d1c4a2b960 a3=8 items=2 ppid=2501 pid=2502 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=7 comm="cat" exe="/usr/bin/cat" subj=unconfined key="exec"ARCH=x86_64 SYSCALL=execve AUID="alice" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1792569600.120:4567): argc=2 a0="cat" a1="/etc/shadow"
+type=CWD msg=audit(1792569600.120:4567): cwd="/home/alice"
+type=PATH msg=audit(1792569600.120:4567): item=0 name="/usr/bin/cat" inode=1316 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1792569600.120:4567): item=1 name="/lib64/ld-linux-x86-64.so.2" inode=2054 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1792569600.120:4567): proctitle=636174002F6574632F736861646F77
+type=EOE msg=audit(1792569600.120:4567): 
+type=USER_AUTH msg=audit(1792569601.004:4568): pid=2240 uid=0 auid=4294967295 ses=4294967295 subj=unconfined msg='op=PAM:authentication grantors=? acct="root" exe="/usr/sbin/sshd" hostname=203.0.113.50 addr=203.0.113.50 terminal=ssh res=failed'UID="root" AUID="unset"
+type=USER_LOGIN msg=audit(1792569601.010:4569): pid=2240 uid=0 auid=4294967295 ses=4294967295 subj=unconfined msg='op=login acct="root" exe="/usr/sbin/sshd" hostname=? addr=203.0.113.50 terminal=sshd res=failed'UID="root" AUID="unset"
+type=USER_CMD msg=audit(1792569602.551:4570): pid=2600 uid=1000 auid=1000 ses=7 subj=unconfined msg='cwd="/home/alice" cmd=73797374656D63746C2072657374617274206E67696E78 exe="/usr/bin/sudo" terminal=pts/0 res=success'UID="alice" AUID="alice"
+type=CRED_ACQ msg=audit(1792569602.553:4571): pid=2600 uid=1000 auid=1000 ses=7 subj=unconfined msg='op=PAM:setcred grantors=pam_permit acct="root" exe="/usr/bin/sudo" hostname=? addr=? terminal=/dev/pts/0 res=success'UID="alice" AUID="alice"
+type=ADD_USER msg=audit(1792569603.300:4572): pid=2410 uid=0 auid=1000 ses=7 subj=unconfined msg='op=add-user id=1002 exe="/usr/sbin/useradd" hostname=web-01 addr=? terminal=pts/0 res=success'UID="root" AUID="alice" ID="deploy"
+type=SYSCALL msg=audit(1792569604.700:4573): arch=c000003e syscall=257 success=yes exit=3 a0=ffffff9c a1=7ffd5e3c4f10 a2=241 a3=1b6 items=2 ppid=2502 pid=2700 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=7 comm="tee" exe="/usr/bin/tee" subj=unconfined key="actions"
+type=CWD msg=audit(1792569604.700:4573): cwd="/root"
+type=PATH msg=audit(1792569604.700:4573): item=0 name="/etc/sudoers.d/" inode=393 dev=fd:01 mode=040750 ouid=0 ogid=0 rdev=00:00 nametype=PARENT cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0
+type=PATH msg=audit(1792569604.700:4573): item=1 name=2F6574632F7375646F6572732E642F3930206465706C6F79 inode=1409 dev=fd:01 mode=0100644 ouid=0 ogid=0 rdev=00:00 nametype=CREATE cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0
+type=PROCTITLE msg=audit(1792569604.700:4573): proctitle=746565002F6574632F7375646F6572732E642F3930206465706C6F79
+type=EOE msg=audit(1792569604.700:4573): 
+type=AVC msg=audit(1792569605.900:4574): avc:  denied  { read } for  pid=812 comm="httpd" name="shadow" dev="dm-0" ino=1234 scontext=system_u:system_r:httpd_t:s0 tcontext=system_u:object_r:shadow_t:s0 tclass=file permissive=0
+type=SYSCALL msg=audit(1792569605.900:4574): arch=c000003e syscall=257 success=no exit=-13 a0=ffffff9c a1=7f2a1c0040b0 a2=0 a3=0 items=0 ppid=1 pid=812 auid=4294967295 uid=48 gid=48 euid=48 suid=48 fsuid=48 egid=48 sgid=48 fsgid=48 tty=(none) ses=4294967295 comm="httpd" exe="/usr/sbin/httpd" subj=system_u:system_r:httpd_t:s0 key=(null)
+type=PROCTITLE msg=audit(1792569605.900:4574): proctitle=2F7573722F7362696E2F6874747064002D44464F524547524F554E44
+type=EOE msg=audit(1792569605.900:4574): 
+type=SYSCALL msg=audit(1792569606.100:4575): arch=c000003e syscall=313 success=yes exit=0 a0=3 a1=55e0e8f6b2a0 a2=0 a3=3 items=0 ppid=2502 pid=2800 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=7 comm="modprobe" exe="/usr/bin/kmod" subj=unconfined key="modules"
+type=KERN_MODULE msg=audit(1792569606.100:4575): name="nf_tables"
+type=PROCTITLE msg=audit(1792569606.100:4575): proctitle=6D6F6470726F6265006E665F7461626C6573
+type=EOE msg=audit(1792569606.100:4575): 
+type=CONFIG_CHANGE msg=audit(1792569607.000:4576): auid=1000 ses=7 subj=unconfined op=remove_rule key="identity" list=4 res=1
+type=SYSCALL msg=audit(1792569607.000:4576): arch=c000003e syscall=44 success=yes exit=1080 a0=4 a1=7ffc8a0d9a10 a2=438 a3=0 items=0 ppid=2502 pid=2900 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=7 comm="auditctl" exe="/usr/sbin/auditctl" subj=unconfined key=(null)
+type=PROCTITLE msg=audit(1792569607.000:4576): proctitle=617564697463746C002D44002D6B006964656E74697479
+type=EOE msg=audit(1792569607.000:4576): 
+type=ANOM_ABEND msg=audit(1792569608.000:4577): auid=1000 uid=1000 gid=1000 ses=7 subj=unconfined pid=4100 comm="badapp" exe="/usr/local/bin/badapp" sig=11 res=1
+type=DAEMON_START msg=audit(1792569609.000:4578): op=start ver=3.1.2 format=enriched kernel=6.8.0-45-generic auid=4294967295 pid=700 uid=0 ses=4294967295 subj=unconfined res=success
+node=web-01 type=SYSCALL msg=audit(1792569610.000:4579): arch=c000003e syscall=101 success=yes exit=0 a0=10 a1=4f2 a2=0 a3=0 items=0 ppid=2502 pid=3000 auid=1000 uid=1000 gid=1000 euid=1000 suid=1000 fsuid=1000 egid=1000 sgid=1000 fsgid=1000 tty=pts0 ses=7 comm="strace" exe="/usr/bin/strace" subj=unconfined key="ptrace"

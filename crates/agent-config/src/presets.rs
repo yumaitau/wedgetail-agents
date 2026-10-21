@@ -23,6 +23,8 @@
 //!
 //! The tests in this module load every registered preset, so a broken preset fails CI.
 
+use crate::linux;
+
 /// The value in `presets` that selects presets by detection.
 pub const AUTO: &str = "auto";
 
@@ -52,7 +54,133 @@ pub struct Preset {
 }
 
 /// Every preset compiled into this agent. Empty until the per-OS preset tickets land.
-pub static BUILTIN: &[Preset] = &[];
+pub static BUILTIN: &[Preset] = &[
+    Preset {
+        id: "linux-core",
+        os: "linux",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/linux/linux-core.toml"),
+    },
+    Preset {
+        id: "linux-auditd",
+        os: "linux",
+        auto: Auto::Detect(linux::checks::auditd),
+        toml: include_str!("../../../presets/linux/linux-auditd.toml"),
+    },
+    Preset {
+        id: "linux-containers",
+        os: "linux",
+        auto: Auto::OptIn,
+        toml: include_str!("../../../presets/linux/linux-containers.toml"),
+    },
+];
+
+/// A built-in preset rule that only runs when `check` passes on the host, for sources that
+/// differ between distributions: `linux-core.auth` reads `/var/log/auth.log` or
+/// `/var/log/secure`, and `linux-core.auth.journald` replaces it on hosts that log to the
+/// journal only. A rule whose check fails is loaded with `enabled = false`. Checks run once
+/// per (re)load and, like [`Auto::Detect`], must be cheap and side-effect free.
+#[derive(Debug, Clone, Copy)]
+pub struct RuleCheck {
+    pub rule_id: &'static str,
+    pub check: fn() -> bool,
+}
+
+/// Host checks for built-in preset rules; rules not listed always run.
+pub static RULE_CHECKS: &[RuleCheck] = &[
+    RuleCheck {
+        rule_id: "linux-core.sshd",
+        check: linux::checks::auth_file,
+    },
+    RuleCheck {
+        rule_id: "linux-core.sshd.journald",
+        check: linux::checks::auth_journald,
+    },
+    RuleCheck {
+        rule_id: "linux-core.sshd.messages",
+        check: linux::checks::auth_messages,
+    },
+    RuleCheck {
+        rule_id: "linux-core.auth",
+        check: linux::checks::auth_file,
+    },
+    RuleCheck {
+        rule_id: "linux-core.auth.journald",
+        check: linux::checks::auth_journald,
+    },
+    RuleCheck {
+        rule_id: "linux-core.auth.messages",
+        check: linux::checks::auth_messages,
+    },
+    RuleCheck {
+        rule_id: "linux-core.kernel",
+        check: linux::checks::journal,
+    },
+    RuleCheck {
+        rule_id: "linux-core.kernel.messages",
+        check: linux::checks::kernel_messages,
+    },
+    RuleCheck {
+        rule_id: "linux-core.cron",
+        check: linux::checks::cron_file,
+    },
+    RuleCheck {
+        rule_id: "linux-core.cron.journald",
+        check: linux::checks::cron_journald,
+    },
+    RuleCheck {
+        rule_id: "linux-core.cron.messages",
+        check: linux::checks::cron_messages,
+    },
+    RuleCheck {
+        rule_id: "linux-core.timers",
+        check: linux::checks::journal,
+    },
+    RuleCheck {
+        rule_id: "linux-core.firewall",
+        check: linux::checks::journal,
+    },
+    RuleCheck {
+        rule_id: "linux-core.dpkg",
+        check: linux::checks::dpkg,
+    },
+    RuleCheck {
+        rule_id: "linux-core.apt",
+        check: linux::checks::apt,
+    },
+    RuleCheck {
+        rule_id: "linux-core.dnf",
+        check: linux::checks::dnf,
+    },
+    RuleCheck {
+        rule_id: "linux-core.yum",
+        check: linux::checks::yum,
+    },
+    RuleCheck {
+        rule_id: "linux-core.zypp",
+        check: linux::checks::zypp,
+    },
+    RuleCheck {
+        rule_id: "linux-containers.docker",
+        check: linux::checks::journal,
+    },
+    RuleCheck {
+        rule_id: "linux-containers.containerd",
+        check: linux::checks::journal,
+    },
+    RuleCheck {
+        rule_id: "linux-containers.kubelet",
+        check: linux::checks::journal,
+    },
+];
+
+/// Whether `rule_id` passes its [`RULE_CHECKS`] entry (true when it has none).
+pub fn rule_check_passes(rule_id: &str) -> bool {
+    RULE_CHECKS
+        .iter()
+        .filter(|c| c.rule_id == rule_id)
+        .all(|c| (c.check)())
+}
 
 /// The result of resolving a `presets` selection.
 #[derive(Debug, Default)]
@@ -198,6 +326,45 @@ pub(crate) mod tests {
         assert!(got.is_empty());
         assert!(s.errors.is_empty());
         assert_eq!(s.warnings.len(), 1);
+    }
+
+    fn builtin_rule_ids() -> Vec<String> {
+        let mut ids = Vec::new();
+        for preset in BUILTIN {
+            let table: toml::Table = toml::from_str(preset.toml).expect("preset toml");
+            for rule in table["rule"].as_array().expect("rules") {
+                ids.push(rule["id"].as_str().expect("id").to_owned());
+            }
+        }
+        ids
+    }
+
+    /// Every host check names a built-in rule, and each source has exactly one variant per
+    /// host: the checks of `<id>`, `<id>.journald` and `<id>.messages` are exclusive.
+    #[test]
+    fn rule_checks_name_builtin_rules() {
+        let ids = builtin_rule_ids();
+        for check in RULE_CHECKS {
+            assert!(
+                ids.iter().any(|id| id == check.rule_id),
+                "{}",
+                check.rule_id
+            );
+        }
+        for base in ["linux-core.sshd", "linux-core.auth", "linux-core.cron"] {
+            let on = [
+                base.to_owned(),
+                format!("{base}.journald"),
+                format!("{base}.messages"),
+            ]
+            .iter()
+            .filter(|id| rule_check_passes(id))
+            .count();
+            assert_eq!(on, 1, "{base}");
+        }
+        let kernel = ["linux-core.kernel", "linux-core.kernel.messages"];
+        assert_eq!(kernel.iter().filter(|id| rule_check_passes(id)).count(), 1);
+        assert!(rule_check_passes("no-such-rule"));
     }
 
     /// Every built-in preset parses, validates and namespaces its rule ids.

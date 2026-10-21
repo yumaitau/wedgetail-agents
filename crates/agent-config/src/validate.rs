@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compile::CompiledRule;
 use crate::multiline::Multiline;
-use crate::{ParserKind, Rule, RuleKind, StartAt, is_valid_rule_id, paths};
+use crate::{FileFormat, ParserKind, Rule, RuleKind, StartAt, is_valid_rule_id, paths};
 
 /// Most entries in `paths`, `exclude`, `units`.
 const MAX_PATHS: usize = 64;
@@ -69,6 +69,7 @@ pub(crate) fn rule(rule: &Rule, protected: &[PathBuf]) -> Vec<String> {
     let file_only = [
         ("paths", !rule.paths.is_empty()),
         ("exclude", !rule.exclude.is_empty()),
+        ("format", rule.format != FileFormat::Lines),
         ("start_at", rule.start_at != StartAt::End),
         ("multiline", rule.multiline.is_some()),
         (
@@ -173,6 +174,36 @@ fn file(rule: &Rule, protected: &[PathBuf], err: &mut impl FnMut(String)) {
             err("exclude patterns must be 1-4096 characters".into());
         } else if let Err(e) = glob::Pattern::new(pattern) {
             err(format!("exclude {pattern:?} is not a valid glob: {e}"));
+        }
+    }
+    if rule.format == FileFormat::Lastlog
+        && (rule.paths.len() != 1
+            || rule
+                .paths
+                .iter()
+                .any(|p| paths::has_glob(&p.to_string_lossy())))
+    {
+        err("format = \"lastlog\" reads exactly one file: one path, no globs".into());
+    }
+    if rule.format != FileFormat::Lines {
+        let lines_only = [
+            ("multiline", rule.multiline.is_some()),
+            (
+                "parser",
+                rule.parser != ParserKind::Raw || rule.regex.is_some(),
+            ),
+            (
+                "max_line_bytes",
+                rule.max_line_bytes.is_some() && rule.format != FileFormat::Auditd,
+            ),
+        ];
+        for (name, set) in lines_only {
+            if set {
+                err(format!(
+                    "{name} does not apply to format = \"{}\"",
+                    rule.format.name()
+                ));
+            }
         }
     }
     if let Some(m) = &rule.multiline

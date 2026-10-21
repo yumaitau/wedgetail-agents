@@ -1,0 +1,20 @@
+#:schema https://raw.githubusercontent.com/yumaitau/wedgetail-agents/main/schema/rules.v1.json
+#
+# linux-auditd: the Linux audit log, selected by "auto" when auditd is running (or its log is
+# readable). Records with the same serial (SYSCALL, EXECVE, PATH, CWD, PROCTITLE, ...) are
+# merged into one event; PROCTITLE and EXECVE arguments are hex-decoded.
+#
+# Reading /var/log/audit/audit.log needs root or CAP_DAC_READ_SEARCH (or auditd's log_group);
+# see docs/presets/linux.md. The agent never changes audit rules: presets/linux/audit.rules is
+# a recommended rule set you can install yourself.
+
+schema_version = 1
+
+[[rule]]
+id = "linux-auditd.audit"
+type = "file"
+source_type = "linux.auditd"
+paths = ["/var/log/audit/audit.log"]
+format = "auditd"
+# Bytes of raw records kept per event; long EXECVE argument lists are cut beyond this.
+max_line_bytes = 131072

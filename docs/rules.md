@@ -115,7 +115,7 @@ max_open_files = 1000
 | `endpoint` | string | required | `https://host[:port][/path]`; no credentials, query or fragment; at most 2,048 characters. Plain `http://` is refused. |
 | `buffer_max_mb` | integer | `256` | 16 to 65,536. When the disk buffer is full the oldest unsent events are dropped and counted in the heartbeat (`dropped.buffer_full`). |
 | `presets` | string or list | `"auto"` | `"auto"`, a list of preset ids, a list with `"auto"` plus opt-in presets (`["auto", "linux-containers"]`), or `[]` for none. Unknown ids are errors; ids for another OS are skipped with a warning. |
-| `disable_rules` | list of rule ids | `[]` | Rule ids from presets or rule files to switch off. An id that matches no rule is a warning, not an error, so one file can be shared by hosts that load different presets. |
+| `disable_rules` | list of rule ids | `[]` | Rule ids from presets or rule files to switch off. An id also switches off the rules under it: `linux-core.auth` switches off `linux-core.auth.journald` too, and `linux-core` every rule of that preset. An id that matches no rule is a warning, not an error, so one file can be shared by hosts that load different presets. |
 | `max_open_files` | integer | `1000` | 1 to 100,000. Most files tailed at once across all `file` rules; files over the cap are skipped with a warning in the agent log. |
 | `state_dir` | path | per OS | Disk buffer, checkpoints, `status.json` and the credential. Linux `/var/lib/wedgetail-agent`, macOS `/Library/Application Support/Wedgetail/state`, Windows `%ProgramData%\Wedgetail\state`. |
 
@@ -206,6 +206,7 @@ max_line_bytes = 65536
 | Field | Type | Default | Valid values and meaning |
 | --- | --- | --- | --- |
 | `paths` | list of paths | required | 1 to 64 absolute paths or globs (`*`, `?`, `[abc]`, `**` for any depth). No `.` or `..` components. See [Which files a rule may read](#which-files-a-rule-may-read). |
+| `format` | string | `"lines"` | How the file becomes events: `lines` (text lines), `auditd`, `utmp` or `lastlog`. See [`format`](#format). |
 | `exclude` | list of globs | none | At most 64. A pattern with a path separator is matched against the whole path (`/var/log/app/debug-*.log`), otherwise against the file name (`*.gz`). |
 | `start_at` | string | `"end"` | Where to start in a file that has no checkpoint when the agent starts: `end` (only new lines) or `beginning`. Files that appear later are always read from the start. |
 | `multiline` | table | none | Join continuation lines into one event; see below. |
@@ -218,6 +219,20 @@ followed by identity (inode or Windows file index), not name: a file matched und
 is read once, a renamed file is drained before it is let go, and a glob that also matches
 rotated names (`app.log*`) does not read the same lines twice. Exclude compressed rotations
 (`*.gz`) anyway: they are not text.
+
+### `format`
+
+| Value | Reads | Events |
+| --- | --- | --- |
+| `lines` | text, one event per line (or per `multiline` group) | `body` is the line; `parser` fills `fields` |
+| `auditd` | the Linux audit log (`/var/log/audit/audit.log`) | one event per audit event: the records with the same `msg=audit(<time>:<serial>)` merged into `fields.records`, hex values decoded; `body` is null. `max_line_bytes` caps the raw bytes kept per event |
+| `utmp` | binary login records (`/var/log/wtmp`, `/var/log/btmp`), glibc layout of the agent's architecture | one event per record, `fields` decoded; `body` is null |
+| `lastlog` | binary `/var/log/lastlog`; exactly one path, no globs | a summary of every user's last login, at most once an hour and only when the file changed |
+
+`multiline` and `parser` apply only to `lines`, and `max_line_bytes` to `lines` and `auditd`.
+The fields each format produces are listed in [docs/presets/linux.md](presets/linux.md). A
+file is still followed through rotation and truncation; `auditd` checkpoints at the first
+record of the oldest unfinished event, so a restart reads and merges it again.
 
 ### `multiline`
 
@@ -379,7 +394,8 @@ is refused unless:
   keychains (`/Library/Keychains`) and the agent log directory (`/Library/Logs/Wedgetail`);
 - it is a regular file (not a directory, device or pipe).
 
-Refused files are skipped with a warning in the agent log. `check-config` also refuses a rule
+Refused files, and files the agent's account cannot open, are skipped with a warning in the
+agent log. `check-config` also refuses a rule
 whose path or root is inside one of the agent's own directories.
 
 The agent also reads only what its service account can read: on Linux the `wedgetail-agent`
@@ -404,10 +420,17 @@ disable_rules = ["linux-core.kernel"]
 ```
 
 `"auto"` selects the presets that are on by default for the OS plus the ones whose source is
-detected on the host (for example `linux-auditd` when auditd is installed). `check-config`
-lists the presets that were loaded and the heartbeat reports them. The preset list and what
-each one collects are in the agent guide; this release has the mechanism, and the presets
-themselves ship in later releases.
+detected on the host (for example `linux-auditd` when auditd is running). `check-config`
+lists the presets that were loaded and the heartbeat reports them.
+
+Some preset rules only apply to some hosts, for example `/var/log/auth.log` on Debian and
+Ubuntu, `/var/log/secure` on RHEL, or the journal where neither exists. Such a preset rule is
+loaded switched off when the host does not have its source (checked at start and on every
+reload), and `check-config` shows it as disabled.
+
+| OS | Presets |
+| --- | --- |
+| Linux | `linux-core`, `linux-auditd`, `linux-containers`: [docs/presets/linux.md](presets/linux.md) |
 
 ## Compatibility
 

@@ -149,10 +149,24 @@ pub fn heartbeat_fields(
         "os_version": host.os_version,
         "hostname": host.hostname,
     });
-    match value {
+    let mut fields = match value {
         Value::Object(map) => map,
         _ => Map::new(),
+    };
+    let details = [
+        ("os_id", &host.os_id),
+        ("os_version_id", &host.os_version_id),
+        ("kernel_version", &host.kernel_version),
+    ];
+    for (key, value) in details {
+        if let Some(v) = value {
+            fields.insert(key.into(), Value::from(v.as_str()));
+        }
     }
+    if !host.ips.is_empty() {
+        fields.insert("ips".into(), json!(host.ips));
+    }
+    fields
 }
 
 pub fn heartbeat_event(fields: Map<String, Value>) -> RawEvent {
@@ -208,6 +222,10 @@ mod tests {
             os: "linux",
             os_version: "Ubuntu 24.04".into(),
             arch: "x86_64",
+            os_id: Some("ubuntu".into()),
+            os_version_id: Some("24.04".into()),
+            kernel_version: Some("6.8.0-45-generic".into()),
+            ips: vec!["192.0.2.10".into(), "2001:db8::10".into()],
         };
         let metrics = Metrics::default();
         let idx = metrics.register_collector("ssh");
@@ -238,6 +256,18 @@ mod tests {
             assert!(fields.contains_key(key), "{key}");
         }
         assert_eq!(fields["dropped"]["oversize"], 2);
+        assert_eq!(fields["os_id"], "ubuntu");
+        assert_eq!(fields["os_version_id"], "24.04");
+        assert_eq!(fields["kernel_version"], "6.8.0-45-generic");
+        assert_eq!(fields["ips"], json!(["192.0.2.10", "2001:db8::10"]));
+        let bare = heartbeat_fields(
+            &HostInfo::default(),
+            Instant::now(),
+            BufferStats::default(),
+            &metrics,
+            &[],
+        );
+        assert!(!bare.contains_key("os_id") && !bare.contains_key("ips"));
         assert_eq!(
             fields["collectors"][0],
             json!({"rule_id": "ssh", "state": "error", "errors": 1, "last_error": "journalctl exited"})

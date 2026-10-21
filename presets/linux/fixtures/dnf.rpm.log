@@ -1,0 +1,6 @@
+2026-10-21T08:30:00+0000 INFO --- logging initialized ---
+2026-10-21T08:30:02+0000 SUBDEBUG Installed: tcpdump-14:4.99.0-9.el9.x86_64
+2026-10-21T08:30:05+0000 SUBDEBUG Upgrade: openssl-libs-1:3.2.2-6.el9_5.x86_64
+2026-10-21T08:30:05+0000 SUBDEBUG Upgraded: openssl-libs-1:3.2.2-6.el9_4.x86_64
+2026-10-21T08:30:06+0000 SUBDEBUG Cleanup: openssl-libs-1:3.2.2-6.el9_4.x86_64
+2026-10-21T08:31:00+0000 SUBDEBUG Erase: tar-2:1.34-13.el9_8.aarch64

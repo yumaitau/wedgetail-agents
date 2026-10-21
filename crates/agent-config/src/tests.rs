@@ -764,3 +764,62 @@ fn shipped_examples_load() {
         panic!("packaging/common/agent.toml: {e}");
     }
 }
+
+#[test]
+fn file_formats() {
+    for format in ["lines", "auditd", "utmp"] {
+        let config = parse_ok(&file_rule(&format!("format = \"{format}\"")));
+        assert_eq!(config.rules[0].format.name(), format);
+    }
+    let config = parse_ok(&format!(
+        "[[rule]]\nid = \"r\"\ntype = \"file\"\npaths = ['{}']\nformat = \"lastlog\"\n",
+        abs("/var/log/lastlog")
+    ));
+    assert_eq!(config.rules[0].format, FileFormat::Lastlog);
+    let config = parse_ok(&file_rule("format = \"auditd\"\nmax_line_bytes = 131072"));
+    assert_eq!(config.rules[0].max_line_bytes(), 131_072);
+
+    for (extra, want) in [
+        (
+            "format = \"utmp\"\nparser = \"json\"",
+            "parser does not apply to format = \"utmp\"",
+        ),
+        (
+            "format = \"auditd\"\nmultiline = { pattern = '^x' }",
+            "multiline does not apply to format = \"auditd\"",
+        ),
+        (
+            "format = \"utmp\"\nmax_line_bytes = 1024",
+            "max_line_bytes does not apply to format = \"utmp\"",
+        ),
+        (
+            "format = \"lastlog\"",
+            "format = \"lastlog\" reads exactly one file",
+        ),
+        ("format = \"binary\"", "unknown variant `binary`"),
+    ] {
+        let err = parse_err(&file_rule(extra));
+        assert!(err.contains(want), "{extra}: {err}");
+    }
+    let err = parse_err(&typed_rule("journald", "format = \"utmp\""));
+    assert!(err.contains("format is for type \"file\""), "{err}");
+}
+
+#[test]
+fn disable_rules_also_disables_rules_under_the_id() {
+    let rules = "[[rule]]\nid = \"app\"\ntype = \"journald\"\n[[rule]]\nid = \"app.journald\"\ntype = \"journald\"\n[[rule]]\nid = \"apple\"\ntype = \"journald\"\n";
+    let config = parse_ok(rules);
+    assert!(config.rules.iter().all(|r| r.enabled));
+    let text = base().replace("presets = []", "presets = []\ndisable_rules = [\"app\"]") + rules;
+    let config = load_text(&text).expect("config");
+    let enabled: Vec<(&str, bool)> = config
+        .rules
+        .iter()
+        .map(|r| (r.id.as_str(), r.enabled))
+        .collect();
+    assert_eq!(
+        enabled,
+        [("app", false), ("app.journald", false), ("apple", true)]
+    );
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+}

@@ -1,0 +1,31 @@
+#:schema https://raw.githubusercontent.com/yumaitau/wedgetail-agents/main/schema/rules.v1.json
+#
+# linux-containers: container runtime and Kubernetes node logs. Opt in with
+# presets = ["auto", "linux-containers"].
+
+schema_version = 1
+
+[[rule]]
+id = "linux-containers.docker"
+type = "journald"
+units = ["docker.service"]
+
+[[rule]]
+id = "linux-containers.containerd"
+type = "journald"
+units = ["containerd.service"]
+
+[[rule]]
+id = "linux-containers.kubelet"
+type = "journald"
+units = ["kubelet.service"]
+
+[[rule]]
+id = "linux-containers.k8s-audit"
+type = "file"
+# Kubernetes API server audit log (kubeadm --audit-log-path), one JSON object per line. Only on
+# control-plane nodes with auditing on; usually readable by root only.
+paths = ["/var/log/kubernetes/audit/*.log"]
+exclude = ["*.gz"]
+parser = "json"
+max_line_bytes = 131072

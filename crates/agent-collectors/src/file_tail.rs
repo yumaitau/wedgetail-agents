@@ -14,6 +14,10 @@
 //! handed to the pipeline. A partial last line is not sent until its newline arrives, or until
 //! the file is rotated away; a pending multiline event is checkpointed at its first line, so a
 //! restart reads and joins it again.
+//!
+//! The rule's `format` picks how bytes become events: text lines (default), audit records
+//! merged per event ([`crate::auditd`], checkpointed at the first record of the oldest
+//! unfinished event), or fixed-size binary utmp records ([`crate::utmp`]).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
@@ -25,10 +29,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use agent_config::multiline::{self, Assembled, Assembler, Multiline};
-use agent_config::{MultilineConfig, Rule, StartAt, paths};
+use agent_config::{FileFormat, MultilineConfig, Rule, StartAt, paths};
 use serde_json::{Map, Value};
 
-use crate::{Batch, Checkpoint, Collector, CollectorError, EventTemplate, FilePosition, time};
+use crate::{
+    Batch, Checkpoint, Collector, CollectorError, EventTemplate, FilePosition, auditd, time, utmp,
+};
 
 /// How often open files are checked for new data, rotation and truncation.
 const CHECK_INTERVAL: Duration = Duration::from_millis(250);
@@ -119,6 +125,9 @@ pub struct FileSpec {
     pub start_at: StartAt,
     pub max_line_bytes: usize,
     pub multiline: Option<MultilineConfig>,
+    pub format: FileFormat,
+    /// `format = "utmp"`: the record layout, [`utmp::Layout::NATIVE`] unless testing.
+    pub utmp_layout: utmp::Layout,
 }
 
 impl FileSpec {
@@ -129,6 +138,8 @@ impl FileSpec {
             start_at,
             max_line_bytes: agent_config::DEFAULT_MAX_LINE_BYTES as usize,
             multiline: None,
+            format: FileFormat::Lines,
+            utmp_layout: utmp::Layout::NATIVE,
         }
     }
 
@@ -139,6 +150,8 @@ impl FileSpec {
             start_at: rule.start_at,
             max_line_bytes: rule.max_line_bytes(),
             multiline: rule.multiline.clone(),
+            format: rule.format,
+            utmp_layout: utmp::Layout::NATIVE,
         }
     }
 }
@@ -172,6 +185,8 @@ pub struct FileTail {
     template: EventTemplate,
     start_at: StartAt,
     max_line_bytes: usize,
+    format: FileFormat,
+    utmp_layout: utmp::Layout,
     watches: Vec<Watch>,
     exclude: Vec<Exclude>,
     multiline: Option<Multiline>,
@@ -213,6 +228,9 @@ struct Harvester {
     partial: Vec<u8>,
     partial_truncated: bool,
     assembler: Option<Assembler>,
+    audit: Option<auditd::Assembler>,
+    /// `format = "utmp"`: fixed-size records instead of lines.
+    record_size: Option<usize>,
     last_line: Instant,
     _slot: FileSlot,
 }
@@ -293,6 +311,8 @@ impl FileTail {
             template,
             start_at: spec.start_at,
             max_line_bytes: spec.max_line_bytes,
+            format: spec.format,
+            utmp_layout: spec.utmp_layout,
             watches,
             exclude,
             multiline,
@@ -322,6 +342,7 @@ impl FileTail {
                 .assembler
                 .as_ref()
                 .and_then(Assembler::pending_start)
+                .or_else(|| h.audit.as_ref().and_then(auditd::Assembler::pending_start))
                 .unwrap_or(h.offset);
             files.insert(
                 h.path.clone(),
@@ -375,8 +396,10 @@ impl FileTail {
                 }
                 match paths::check_file(&path, &watch.root, &self.env.protected) {
                     Ok(canonical) => matched.push((path, canonical)),
-                    // A plain path that does not exist yet is picked up once it does.
-                    Err(_) if path.symlink_metadata().is_err() => {}
+                    // A plain path that does not exist yet is picked up once it does; one that
+                    // cannot be seen (a directory the agent may not read) is warned about.
+                    Err(_) if matches!(path.symlink_metadata(), Err(e) if e.kind() == io::ErrorKind::NotFound) =>
+                        {}
                     Err(e) => refused.push((path, e)),
                 }
             }
@@ -414,7 +437,16 @@ impl FileTail {
                 .is_some()
                 .then(|| Assembler::new(self.max_line_bytes));
             match Harvester::open(&canonical, path.clone(), offset, slot, assembler) {
-                Ok(h) => self.harvesters.push(h),
+                Ok(mut h) => {
+                    match self.format {
+                        FileFormat::Auditd => {
+                            h.audit = Some(auditd::Assembler::new(self.max_line_bytes));
+                        }
+                        FileFormat::Utmp => h.record_size = Some(self.utmp_layout.utmp_size()),
+                        FileFormat::Lines | FileFormat::Lastlog => {}
+                    }
+                    self.harvesters.push(h);
+                }
                 Err(e) => self.warn_once(&path, &format!("{}: {e}", path.display())),
             }
         }
@@ -434,23 +466,62 @@ impl FileTail {
             return 0;
         }
         match (self.first_scan, self.start_at) {
+            // Binary records start at a record boundary.
+            (true, StartAt::End) if self.format == FileFormat::Utmp => {
+                len - len % self.utmp_layout.utmp_size() as u64
+            }
             (true, StartAt::End) => len,
             // New since the agent started, or start_at = "beginning".
             _ => 0,
         }
     }
 
-    fn to_events(&self, path: &Path, events: Vec<Assembled>, out: &mut Vec<crate::RawEvent>) {
-        let path = path.to_string_lossy();
+    fn to_events(
+        &self,
+        path: &Path,
+        events: Vec<Assembled>,
+        audit: Vec<auditd::Event>,
+        out: &mut Vec<crate::RawEvent>,
+    ) {
+        let path_text = path.to_string_lossy();
+        for ev in audit {
+            let mut event = self.template.event(ev.ts_us, None, ev.fields);
+            event
+                .attrs
+                .insert("path".into(), Value::from(path_text.as_ref()));
+            if ev.truncated {
+                event.attrs.insert("truncated".into(), Value::Bool(true));
+            }
+            out.push(event);
+        }
+        let path = path_text;
+        // utmp records are named after the file: wtmp, btmp (also wtmp.1 after rotation).
+        let log = Path::new(path.as_ref())
+            .file_name()
+            .map(|n| {
+                n.to_string_lossy()
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_owned()
+            })
+            .unwrap_or_default();
         for Assembled { bytes, truncated } in events {
             if bytes.is_empty() && !truncated {
                 continue;
             }
-            let mut ev = self.template.event(
-                time::now_us(),
-                Some(String::from_utf8_lossy(&bytes).into_owned()),
-                Map::new(),
-            );
+            let mut ev = if self.format == FileFormat::Utmp {
+                let Some((ts, fields)) = utmp::decode_utmp(&bytes, &log, self.utmp_layout) else {
+                    continue;
+                };
+                self.template.event(ts, None, fields)
+            } else {
+                self.template.event(
+                    time::now_us(),
+                    Some(String::from_utf8_lossy(&bytes).into_owned()),
+                    Map::new(),
+                )
+            };
             ev.attrs.insert("path".into(), Value::from(path.as_ref()));
             if truncated {
                 ev.attrs.insert("truncated".into(), Value::Bool(true));
@@ -481,6 +552,8 @@ impl Harvester {
             partial: Vec::new(),
             partial_truncated: false,
             assembler,
+            audit: None,
+            record_size: None,
             last_line: Instant::now(),
             _slot: slot,
         })
@@ -507,6 +580,21 @@ impl Harvester {
             let mut start = 0;
             while start < n && out.len() < max {
                 let rest = &chunk[start..n];
+                if let Some(size) = self.record_size {
+                    let take = (size - self.partial.len()).min(rest.len());
+                    self.partial.extend_from_slice(&rest[..take]);
+                    start += take;
+                    self.read_pos += take as u64;
+                    if self.partial.len() == size {
+                        out.push(Line {
+                            bytes: std::mem::take(&mut self.partial),
+                            truncated: false,
+                            start: self.offset,
+                        });
+                        self.offset = self.read_pos;
+                    }
+                    continue;
+                }
                 match rest.iter().position(|&b| b == b'\n') {
                     Some(i) => {
                         self.push_partial(&rest[..i], max_line_bytes);
@@ -568,6 +656,7 @@ impl Harvester {
         max_line_bytes: usize,
         multiline: Option<&Multiline>,
         out: &mut Vec<Assembled>,
+        audit_out: &mut Vec<auditd::Event>,
     ) -> io::Result<()> {
         let mut lines = Vec::new();
         if self.file.metadata()?.len() < self.read_pos {
@@ -577,9 +666,12 @@ impl Harvester {
                 self.path.display()
             );
             self.flush_partial(&mut lines);
-            self.assemble(lines.drain(..), multiline, out);
+            self.assemble(lines.drain(..), multiline, out, audit_out);
             if let Some(a) = &mut self.assembler {
                 a.flush(out);
+            }
+            if let Some(a) = &mut self.audit {
+                a.flush_all(audit_out);
             }
             self.file.seek(SeekFrom::Start(0))?;
             self.offset = 0;
@@ -591,11 +683,14 @@ impl Harvester {
             self.flush_partial(&mut lines);
             self.closed = true;
         }
-        self.assemble(lines.drain(..), multiline, out);
-        if self.closed
-            && let Some(a) = &mut self.assembler
-        {
-            a.flush(out);
+        self.assemble(lines.drain(..), multiline, out, audit_out);
+        if self.closed {
+            if let Some(a) = &mut self.assembler {
+                a.flush(out);
+            }
+            if let Some(a) = &mut self.audit {
+                a.flush_all(audit_out);
+            }
         }
         Ok(())
     }
@@ -605,9 +700,20 @@ impl Harvester {
         lines: impl Iterator<Item = Line>,
         multiline: Option<&Multiline>,
         out: &mut Vec<Assembled>,
+        audit_out: &mut Vec<auditd::Event>,
     ) {
         for line in lines {
             self.last_line = Instant::now();
+            if let Some(a) = &mut self.audit {
+                a.push(
+                    &line.bytes,
+                    line.truncated,
+                    line.start,
+                    self.last_line,
+                    audit_out,
+                );
+                continue;
+            }
             match (multiline, &mut self.assembler) {
                 (Some(ml), Some(a)) => a.push(ml, &line.bytes, line.truncated, line.start, out),
                 _ => out.push(Assembled {
@@ -641,6 +747,7 @@ impl Collector for FileTail {
         let deadline = Instant::now() + wait;
         let mut events = Vec::new();
         let mut assembled = Vec::new();
+        let mut audit = Vec::new();
         loop {
             if Instant::now() >= self.next_scan {
                 self.scan();
@@ -657,6 +764,7 @@ impl Collector for FileTail {
                     self.max_line_bytes,
                     self.multiline.as_ref(),
                     &mut assembled,
+                    &mut audit,
                 )
                 .map_err(|e| CollectorError(format!("{}: {e}", h.path.display())))?;
                 if h.last_line.elapsed() >= self.flush_after
@@ -664,8 +772,16 @@ impl Collector for FileTail {
                 {
                     a.flush(&mut assembled);
                 }
+                if let Some(a) = &mut h.audit {
+                    a.flush_idle(Instant::now(), &mut audit);
+                }
                 let path = h.path.clone();
-                self.to_events(&path, std::mem::take(&mut assembled), &mut events);
+                self.to_events(
+                    &path,
+                    std::mem::take(&mut assembled),
+                    std::mem::take(&mut audit),
+                    &mut events,
+                );
             }
             for h in self.harvesters.iter().filter(|h| h.closed) {
                 log::info!("{} was rotated or removed; done with it", h.path.display());

@@ -1,18 +1,28 @@
 //! Facts about the host for the heartbeat and for enrolment (including the machine id).
 
-/// OS, version, architecture and host name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+use std::net::UdpSocket;
+
+/// OS, version, architecture and host name, plus details the server attaches to the host's
+/// events (distribution, kernel, addresses).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostInfo {
     pub hostname: String,
     /// `linux`, `windows` or `macos`.
     pub os: &'static str,
     pub os_version: String,
     pub arch: &'static str,
+    /// Linux distribution id and version from os-release (`ubuntu`, `24.04`).
+    pub os_id: Option<String>,
+    pub os_version_id: Option<String>,
+    /// Linux kernel release (`6.8.0-45-generic`).
+    pub kernel_version: Option<String>,
+    /// The host's primary IPv4 and IPv6 addresses (see [`primary_ips`]).
+    pub ips: Vec<String>,
 }
 
 impl HostInfo {
     pub fn detect() -> Self {
-        Self {
+        let mut info = Self {
             hostname: gethostname::gethostname()
                 .to_string_lossy()
                 .chars()
@@ -21,8 +31,34 @@ impl HostInfo {
             os: std::env::consts::OS,
             os_version: os_version().unwrap_or_else(|| "unknown".to_owned()),
             arch: std::env::consts::ARCH,
+            ips: primary_ips(),
+            ..Self::default()
+        };
+        if cfg!(target_os = "linux") {
+            let release = agent_config::linux::OsRelease::read();
+            info.os_id = Some(release.id).filter(|s| !s.is_empty());
+            info.os_version_id = Some(release.version_id).filter(|s| !s.is_empty());
+            info.kernel_version = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+                .ok()
+                .map(|v| v.trim().chars().take(128).collect())
+                .filter(|v: &String| !v.is_empty());
         }
+        info
     }
+}
+
+/// The source addresses of the host's default IPv4 and IPv6 routes. Connecting a UDP socket
+/// to a documentation address (RFC 5737, RFC 3849) only selects a route: nothing is sent.
+pub fn primary_ips() -> Vec<String> {
+    [("0.0.0.0:0", "192.0.2.1:9"), ("[::]:0", "[2001:db8::1]:9")]
+        .iter()
+        .filter_map(|(bind, target)| {
+            let socket = UdpSocket::bind(bind).ok()?;
+            socket.connect(target).ok()?;
+            let ip = socket.local_addr().ok()?.ip();
+            (!ip.is_unspecified() && !ip.is_loopback()).then(|| ip.to_string())
+        })
+        .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -283,5 +319,12 @@ mod tests {
         let info = HostInfo::detect();
         assert!(!info.hostname.is_empty());
         assert!(["linux", "windows", "macos"].contains(&info.os));
+        if cfg!(target_os = "linux") {
+            assert!(info.kernel_version.is_some());
+        }
+        for ip in &info.ips {
+            assert!(ip.parse::<std::net::IpAddr>().is_ok(), "{ip}");
+        }
+        assert!(info.ips.len() <= 2);
     }
 }
