@@ -285,6 +285,14 @@ jobs:
           plutil -lint packaging/macos/wedgetail-agent-pppc.mobileconfig
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
+          # Turn auditd on where this macOS still ships it (the runner is thrown away), so
+          # "auto" selects macos-audit and it reads a real trail.
+          if [ ! -f /etc/security/audit_control ] && [ -f /etc/security/audit_control.example ]; then
+            sudo cp /etc/security/audit_control.example /etc/security/audit_control
+          fi
+          sudo audit -i || true
+          sleep 2
+          sudo ls -l /var/audit || true
           sudo wedgetail-agent check-config
           sudo launchctl bootstrap system /Library/LaunchDaemons/au.com.yumait.wedgetail-agent.plist
           sleep 8
