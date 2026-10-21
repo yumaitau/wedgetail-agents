@@ -1,7 +1,12 @@
 //! Windows Event Log collector: a pull subscription (`EvtSubscribe` with a signal event) that
-//! starts after a saved bookmark. Event XML parsing is in the portable `wineventlog` module.
+//! starts after a saved bookmark. Event XML parsing and script block reassembly are in the
+//! portable `wineventlog` module.
+//!
+//! The bookmark only moves past an event once everything read up to it has been handed to the
+//! pipeline: while PowerShell script block parts are held for reassembly it stays before
+//! them, so a restart reads them again rather than losing them.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_OPERATION, ERROR_NO_MORE_ITEMS, HANDLE,
@@ -15,7 +20,8 @@ use windows::Win32::System::EventLog::{
 use windows::Win32::System::Threading::{CreateEventW, ResetEvent, WaitForSingleObject};
 use windows::core::{HSTRING, PCWSTR};
 
-use crate::wineventlog::{MAX_EVENT_XML_BYTES, event_xml_to_wef, wef_time_us};
+use crate::wineventlog::script_block::ScriptBlocks;
+use crate::wineventlog::{MAX_EVENT_XML_BYTES, event_xml_to_wef, is_structured_query, wef_time_us};
 use crate::{Batch, Checkpoint, Collector, CollectorError, EventTemplate, time};
 
 /// Events fetched per `EvtNext` call.
@@ -49,6 +55,10 @@ impl Drop for SignalEvent {
 struct Subscription {
     handle: EvtHandle,
     bookmark: EvtHandle,
+    /// The last event read, for moving the bookmark when held events are released later.
+    last: Option<EvtHandle>,
+    /// The bookmark moved since it was last rendered.
+    moved: bool,
     signal: SignalEvent,
 }
 
@@ -76,14 +86,22 @@ impl Subscription {
             Some(_) => (Some(bookmark.0), EvtSubscribeStartAfterBookmark.0),
             None => (None, EvtSubscribeToFutureEvents.0),
         };
-        // SAFETY: channel and query are valid wide strings for the call; the signal and
-        // bookmark handles are open and outlive the subscription (field drop order); no
-        // callback or context is used (pull model).
+        // A structured query (<QueryList>) names its channels; EvtSubscribe then takes none.
+        let channel = HSTRING::from(channel);
+        let channel = if is_structured_query(query) {
+            PCWSTR::null()
+        } else {
+            PCWSTR(channel.as_ptr())
+        };
+        // SAFETY: channel (null or borrowed from an HSTRING that lives to the end of this
+        // function) and query are valid wide strings for the call; the signal and bookmark
+        // handles are open and outlive the subscription (field drop order); no callback or
+        // context is used (pull model).
         let handle = EvtHandle(unsafe {
             EvtSubscribe(
                 None,
                 Some(signal.0),
-                &HSTRING::from(channel),
+                channel,
                 &HSTRING::from(query),
                 start_after,
                 None,
@@ -94,21 +112,39 @@ impl Subscription {
         Ok(Self {
             handle,
             bookmark,
+            last: None,
+            moved: false,
             signal,
         })
     }
 
-    /// Up to `max` rendered events, waiting up to `wait` for the first.
-    fn next(&mut self, max: usize, wait: Duration) -> windows::core::Result<Vec<String>> {
-        let mut out = Vec::new();
+    /// Move the bookmark to the last event read.
+    fn advance(&mut self) -> windows::core::Result<()> {
+        if let Some(last) = &self.last {
+            // SAFETY: both handles are open.
+            unsafe { EvtUpdateBookmark(self.bookmark.0, last.0) }?;
+            self.moved = true;
+        }
+        Ok(())
+    }
+
+    /// Up to `max` events, waiting up to `wait` for the first. `each` gets every rendered
+    /// event in order and returns whether the bookmark may move past it.
+    fn next(
+        &mut self,
+        max: usize,
+        wait: Duration,
+        mut each: impl FnMut(String) -> bool,
+    ) -> windows::core::Result<usize> {
+        let mut out = 0;
         let mut waited = false;
         loop {
             // Reset before draining so an event that arrives after the drain re-signals.
             // SAFETY: the signal handle is open.
             unsafe { ResetEvent(self.signal.0) }?;
-            while out.len() < max {
+            while out < max {
                 let mut raw = [0isize; NEXT_BATCH];
-                let want = (max - out.len()).min(NEXT_BATCH);
+                let want = (max - out).min(NEXT_BATCH);
                 let mut returned = 0u32;
                 // SAFETY: `raw[..want]` is a writable array of event handle slots and
                 // `returned` a valid out pointer; a zero timeout never blocks.
@@ -116,11 +152,20 @@ impl Subscription {
                     unsafe { EvtNext(self.handle.0, &mut raw[..want], 0, 0, &mut returned) };
                 match result {
                     Ok(()) => {
-                        for &h in &raw[..(returned as usize).min(want)] {
-                            let event = EvtHandle(EVT_HANDLE(h));
-                            out.push(render(event.0, EvtRenderEventXml)?);
-                            // SAFETY: both handles are open.
-                            unsafe { EvtUpdateBookmark(self.bookmark.0, event.0) }?;
+                        // Own every returned handle first so each is closed even if
+                        // rendering one fails.
+                        let events: Vec<EvtHandle> = raw[..(returned as usize).min(want)]
+                            .iter()
+                            .map(|&h| EvtHandle(EVT_HANDLE(h)))
+                            .collect();
+                        for event in events {
+                            let xml = render(event.0, EvtRenderEventXml)?;
+                            let release = each(xml);
+                            self.last = Some(event);
+                            out += 1;
+                            if release {
+                                self.advance()?;
+                            }
                         }
                     }
                     // A pull subscription with nothing new reports ERROR_NO_MORE_ITEMS, or
@@ -134,7 +179,7 @@ impl Subscription {
                     Err(e) => return Err(e),
                 }
             }
-            if !out.is_empty() || waited {
+            if out > 0 || waited {
                 return Ok(out);
             }
             let ms = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
@@ -147,8 +192,14 @@ impl Subscription {
         }
     }
 
-    fn bookmark_xml(&self) -> windows::core::Result<String> {
-        render(self.bookmark.0, EvtRenderBookmark)
+    /// The bookmark, if it moved since the last call.
+    fn take_bookmark_xml(&mut self) -> windows::core::Result<Option<String>> {
+        if !self.moved {
+            return Ok(None);
+        }
+        let xml = render(self.bookmark.0, EvtRenderBookmark)?;
+        self.moved = false;
+        Ok(Some(xml))
     }
 }
 
@@ -190,6 +241,7 @@ pub struct EventLog {
     query: String,
     bookmark_xml: Option<String>,
     subscription: Option<Subscription>,
+    script_blocks: ScriptBlocks,
 }
 
 impl EventLog {
@@ -200,6 +252,7 @@ impl EventLog {
             query,
             bookmark_xml: None,
             subscription: None,
+            script_blocks: ScriptBlocks::default(),
         }
     }
 }
@@ -218,6 +271,8 @@ impl Collector for EventLog {
             self.bookmark_xml = Some(bookmark_xml);
         }
         self.subscription = None;
+        // Held script block parts are read again from the bookmark.
+        self.script_blocks = ScriptBlocks::default();
         let sub = Subscription::open(&self.channel, &self.query, self.bookmark_xml.as_deref())
             .map_err(|e| win_err(&format!("subscribe to {}", self.channel), e))?;
         self.subscription = Some(sub);
@@ -229,60 +284,64 @@ impl Collector for EventLog {
             .subscription
             .as_mut()
             .ok_or_else(|| CollectorError("not subscribed".into()))?;
-        let xmls = sub
-            .next(max_events, wait)
-            .map_err(|e| win_err("read events", e))?;
-        if xmls.is_empty() {
-            return Ok(Batch::default());
-        }
-        let mut events = Vec::with_capacity(xmls.len());
-        for xml in xmls {
+        let (template, blocks) = (&self.template, &mut self.script_blocks);
+        let mut events = Vec::new();
+        sub.next(max_events, wait, |xml| {
             match event_xml_to_wef(&xml) {
                 Ok(wef) => {
                     let ts = wef_time_us(&wef).unwrap_or_else(time::now_us);
-                    events.push(self.template.event(ts, None, wef));
+                    events.extend(blocks.push(template.event(ts, None, wef), Instant::now()));
                 }
-                Err(e) => log::warn!("{}: skipped an event: {e}", self.template.rule_id),
+                Err(e) => log::warn!("{}: skipped an event: {e}", template.rule_id),
             }
-        }
-        let bookmark_xml = sub
-            .bookmark_xml()
-            .map_err(|e| win_err("render bookmark", e))?;
-        self.bookmark_xml = Some(bookmark_xml.clone());
-        Ok(Batch {
-            events,
-            checkpoint: Some(Checkpoint::Wineventlog { bookmark_xml }),
+            blocks.is_idle()
         })
+        .map_err(|e| win_err("read events", e))?;
+        // Script blocks that waited too long for missing parts are sent with what arrived.
+        let flushed = blocks.flush_expired(Instant::now());
+        if !flushed.is_empty() && blocks.is_idle() {
+            sub.advance().map_err(|e| win_err("update bookmark", e))?;
+        }
+        events.extend(flushed);
+        let checkpoint = sub
+            .take_bookmark_xml()
+            .map_err(|e| win_err("render bookmark", e))?
+            .map(|bookmark_xml| {
+                self.bookmark_xml = Some(bookmark_xml.clone());
+                Checkpoint::Wineventlog { bookmark_xml }
+            });
+        Ok(Batch { events, checkpoint })
     }
 }
 
-/// Runs a real subscription on the Application channel. Writing test events with
-/// `eventcreate` needs an administrator (as on GitHub's Windows runners); skipped otherwise.
+/// Real subscriptions on the Application channel. Writing test events with `eventcreate` needs
+/// an administrator (as on GitHub's Windows runners); those tests are skipped otherwise.
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use super::EventLog;
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_EVT_CHANNEL_NOT_FOUND};
+
+    use super::{EventLog, Subscription};
+    use crate::wineventlog::{MAX_IDS_PER_SELECT, build_xpath, is_structured_query};
     use crate::{Checkpoint, Collector, EventTemplate};
 
     const SOURCE: &str = "WedgetailAgentTest";
 
-    fn eventcreate(message: &str) -> bool {
+    fn eventcreate(id: u32, message: &str) -> bool {
         Command::new("eventcreate")
             .args([
                 "/T",
                 "INFORMATION",
                 "/ID",
-                "100",
+                &id.to_string(),
                 "/L",
                 "APPLICATION",
-                "/SO",
-                SOURCE,
-                "/D",
-                message,
             ])
+            .args(["/SO", SOURCE, "/D", message])
             .output()
             .is_ok_and(|o| o.status.success())
     }
@@ -299,7 +358,9 @@ mod tests {
             let batch = c.poll(100, Duration::from_millis(500)).expect("poll");
             for e in &batch.events {
                 assert_eq!(e.fields["System"]["Channel"], "Application");
-                assert_eq!(e.fields["System"]["Provider"]["Name"], SOURCE);
+                if e.fields["System"]["Provider"]["Name"] != SOURCE {
+                    continue;
+                }
                 if let Some(data) = e.fields["EventData"]["Data"][0].as_str()
                     && data.starts_with(token)
                 {
@@ -318,7 +379,7 @@ mod tests {
         let template = EventTemplate::new("w", "windows.eventlog", None, &BTreeMap::new());
         let mut c = EventLog::new(template.clone(), "Application".into(), query.clone());
         c.start(None).expect("subscribe");
-        if !eventcreate(&format!("{token} one")) {
+        if !eventcreate(100, &format!("{token} one")) {
             eprintln!("eventcreate failed (not an administrator?); skipping");
             return;
         }
@@ -331,10 +392,81 @@ mod tests {
         drop(c);
 
         // Written while stopped: delivered after the bookmark, without repeating "one".
-        assert!(eventcreate(&format!("{token} two")));
+        assert!(eventcreate(100, &format!("{token} two")));
         let mut c = EventLog::new(template, "Application".into(), query);
         c.start(cp).expect("resubscribe");
         let (got, _) = collect(&mut c, &token, 2, 5);
         assert_eq!(got, [format!("{token} two")]);
+    }
+
+    /// A long id list becomes a structured query with several Selects; an id in the last
+    /// chunk is delivered, and an id that is not listed is not.
+    #[test]
+    fn long_event_id_lists_are_split_and_still_filter() {
+        let ids: Vec<u32> = (101..=160).collect();
+        let query = build_xpath("Application", &ids, None);
+        assert!(is_structured_query(&query));
+        // Evidence for the per-Select limit: the same ids as one expression.
+        let ors: Vec<String> = ids.iter().map(|id| format!("EventID={id}")).collect();
+        let single = format!("*[System[({})]]", ors.join(" or "));
+        match Subscription::open("Application", &single, None) {
+            Ok(_) => eprintln!("a single {}-term XPath was accepted here", ids.len()),
+            Err(e) => eprintln!("a single {}-term XPath was refused: {e}", ids.len()),
+        }
+
+        let token = format!("wt-split-{}", std::process::id());
+        let template = EventTemplate::new("w", "windows.eventlog", None, &BTreeMap::new());
+        let mut c = EventLog::new(template, "Application".into(), query);
+        c.start(None).expect("subscribe with a structured query");
+        assert!(ids.len() > 2 * MAX_IDS_PER_SELECT);
+        if !eventcreate(99, &format!("{token} not listed")) {
+            eprintln!("eventcreate failed (not an administrator?); skipping");
+            return;
+        }
+        assert!(eventcreate(155, &format!("{token} listed")));
+        let (got, cp) = collect(&mut c, &token, 2, 10);
+        assert_eq!(got, [format!("{token} listed")]);
+        assert!(cp.is_some());
+    }
+
+    /// Every Windows preset rule's query is accepted by the Event Log service. Channels that
+    /// do not exist on this host are reported, not failed; Security needs an administrator.
+    #[test]
+    fn preset_queries_are_valid() {
+        let presets: Vec<&str> = agent_config::presets::BUILTIN
+            .iter()
+            .filter(|p| p.os == "windows")
+            .map(|p| p.id)
+            .collect();
+        let main =
+            format!("[agent]\nendpoint = \"https://ingest.example.com\"\npresets = {presets:?}\n");
+        let config = agent_config::AgentConfig::from_sources(
+            Path::new("agent.toml"),
+            &main,
+            &[],
+            agent_config::presets::BUILTIN,
+            "windows",
+            None,
+        )
+        .expect("presets load");
+        let mut problems = Vec::new();
+        for rule in &config.rules {
+            let channel = rule.channel.as_deref().expect("channel");
+            let query = build_xpath(channel, &rule.event_ids, rule.xpath.as_deref());
+            match Subscription::open(channel, &query, None) {
+                Ok(_) => eprintln!("{}: {channel}: subscribed", rule.id),
+                Err(e) if e.code() == ERROR_EVT_CHANNEL_NOT_FOUND.to_hresult() => {
+                    eprintln!("{}: {channel}: channel not on this host", rule.id);
+                }
+                Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => {
+                    eprintln!(
+                        "{}: {channel}: access denied (not an administrator?)",
+                        rule.id
+                    );
+                }
+                Err(e) => problems.push(format!("{}: {channel}: {query}: {e}", rule.id)),
+            }
+        }
+        assert!(problems.is_empty(), "{problems:#?}");
     }
 }

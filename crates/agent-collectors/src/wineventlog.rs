@@ -1,10 +1,11 @@
 //! Windows Event Log: the portable half.
 //!
 //! The subscription itself (`EvtSubscribe` with bookmarks) lives in `os::windows::eventlog`.
-//! Everything that can be tested without Windows is here: building the XPath query and turning
+//! Everything that can be tested without Windows is here: building the XPath query, turning
 //! rendered event XML into the WEF JSON shape the Wedgetail `windows` normaliser reads:
 //! `{System: {Provider: {Name}, EventID, TimeCreated: {SystemTime}, EventRecordID, Channel,
-//! Computer, ...}, EventData: {<Name>: <value>, ...}}`.
+//! Computer, ...}, EventData: {<Name>: <value>, ...}}`, and joining PowerShell script blocks
+//! split over several events ([`script_block`]).
 
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
@@ -13,22 +14,60 @@ use serde_json::{Map, Value};
 
 use crate::MAX_LINE_BYTES;
 
+pub mod script_block;
+
 /// Rendered events larger than this are not parsed.
 pub const MAX_EVENT_XML_BYTES: usize = 1024 * 1024;
 const MAX_DEPTH: usize = 16;
 const MAX_NODES: usize = 4096;
 
-/// XPath for `EvtSubscribe`: the rule's raw `xpath` if set, else a filter on `event_ids`, else
-/// every event.
-pub fn build_xpath(event_ids: &[u32], xpath: Option<&str>) -> String {
+/// Most `EventID=` terms in one XPath expression. The Event Log service refuses expressions
+/// with many more terms, so a longer `event_ids` list becomes one `Select` per chunk in a
+/// structured query.
+pub const MAX_IDS_PER_SELECT: usize = 20;
+
+/// Query for `EvtSubscribe` on `channel`: the rule's raw `xpath` if set, else a filter on
+/// `event_ids`, else every event. More than [`MAX_IDS_PER_SELECT`] ids give a structured
+/// query (`<QueryList>`, see [`is_structured_query`]) with one `Select` per chunk.
+pub fn build_xpath(channel: &str, event_ids: &[u32], xpath: Option<&str>) -> String {
     if let Some(x) = xpath {
         return x.to_owned();
     }
     if event_ids.is_empty() {
         return "*".to_owned();
     }
-    let ors: Vec<String> = event_ids.iter().map(|id| format!("EventID={id}")).collect();
-    format!("*[System[({})]]", ors.join(" or "))
+    let mut selects = event_ids.chunks(MAX_IDS_PER_SELECT).map(|ids| {
+        let ors: Vec<String> = ids.iter().map(|id| format!("EventID={id}")).collect();
+        format!("*[System[({})]]", ors.join(" or "))
+    });
+    if event_ids.len() <= MAX_IDS_PER_SELECT {
+        return selects.next().unwrap_or_default();
+    }
+    let path = xml_escape(channel);
+    let body: String = selects
+        .map(|x| format!("<Select Path=\"{path}\">{}</Select>", xml_escape(&x)))
+        .collect();
+    format!("<QueryList><Query Id=\"0\" Path=\"{path}\">{body}</Query></QueryList>")
+}
+
+/// A structured query names its channels itself; `EvtSubscribe` then takes no channel path.
+pub fn is_structured_query(query: &str) -> bool {
+    query.trim_start().starts_with('<')
+}
+
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[derive(Debug, Default)]
@@ -348,14 +387,58 @@ mod tests {
 
     #[test]
     fn xpath() {
-        assert_eq!(build_xpath(&[], None), "*");
+        assert_eq!(build_xpath("Security", &[], None), "*");
         assert_eq!(
-            build_xpath(&[4624, 4625], None),
+            build_xpath("Security", &[4624, 4625], None),
             "*[System[(EventID=4624 or EventID=4625)]]"
         );
         assert_eq!(
-            build_xpath(&[4624], Some("*[System[Level<=3]]")),
+            build_xpath("Security", &[4624], Some("*[System[Level<=3]]")),
             "*[System[Level<=3]]"
         );
+        assert!(!is_structured_query("*[System[(EventID=1)]]"));
+        let ids: Vec<u32> = (1..=MAX_IDS_PER_SELECT as u32).collect();
+        let x = build_xpath("Security", &ids, None);
+        assert!(!is_structured_query(&x));
+        assert_eq!(x.matches("EventID=").count(), MAX_IDS_PER_SELECT);
+    }
+
+    #[test]
+    fn long_id_lists_are_split_into_selects() {
+        let ids: Vec<u32> = (1..=45).collect();
+        let x = build_xpath("Microsoft-Windows-AppLocker/MSI and Script", &ids, None);
+        assert!(is_structured_query(&x));
+        let path = "Microsoft-Windows-AppLocker/MSI and Script";
+        let chunk = |r: std::ops::RangeInclusive<u32>| {
+            let ors: Vec<String> = r.map(|id| format!("EventID={id}")).collect();
+            format!(
+                "<Select Path=\"{path}\">*[System[({})]]</Select>",
+                ors.join(" or ")
+            )
+        };
+        assert_eq!(
+            x,
+            format!(
+                "<QueryList><Query Id=\"0\" Path=\"{path}\">{}{}{}</Query></QueryList>",
+                chunk(1..=20),
+                chunk(21..=40),
+                chunk(41..=45)
+            )
+        );
+        // Every id is selected exactly once, and no Select has more than the limit.
+        for id in 1..=45 {
+            let n = x.matches(&format!("EventID={id} ")).count()
+                + x.matches(&format!("EventID={id})")).count();
+            assert_eq!(n, 1, "{id}");
+        }
+        for select in x.split("<Select").skip(1) {
+            assert!(select.matches("EventID=").count() <= MAX_IDS_PER_SELECT);
+        }
+        // Channel names are escaped in the XML.
+        let x = build_xpath("A&B\"<x>'", &ids, None);
+        assert!(x.contains("Path=\"A&amp;B&quot;&lt;x&gt;&apos;\""), "{x}");
+        // The structured query is itself well-formed XML.
+        let mut reader = quick_xml::Reader::from_str(&x);
+        while !matches!(reader.read_event().expect("well-formed"), Event::Eof) {}
     }
 }

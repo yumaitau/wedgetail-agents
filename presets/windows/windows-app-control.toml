@@ -1,0 +1,40 @@
+# Preset windows-app-control: AppLocker and App Control for Business (WDAC, Code Integrity)
+# audit and block events (on by default on Windows). Nothing is written until an AppLocker
+# or App Control policy is deployed.
+schema_version = 1
+
+# Executable or DLL would have been blocked (8003, audit mode) or was blocked (8004).
+[[rule]]
+id = "windows-app-control.applocker-exe"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/EXE and DLL"
+event_ids = [8003, 8004]
+
+# MSI or script would have been blocked (8006) or was blocked (8007).
+[[rule]]
+id = "windows-app-control.applocker-script"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/MSI and Script"
+event_ids = [8006, 8007]
+
+# Packaged app execution would have been blocked (8021) or was blocked (8022).
+[[rule]]
+id = "windows-app-control.applocker-packaged-execution"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Execution"
+event_ids = [8021, 8022]
+
+# Packaged app installation would have been blocked (8024) or was blocked (8025).
+[[rule]]
+id = "windows-app-control.applocker-packaged-deployment"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Deployment"
+event_ids = [8024, 8025]
+
+# Code Integrity: image did not meet signing requirements (3033 blocked, 3034 audit), App
+# Control policy would have blocked (3076, audit mode) or blocked (3077) a file.
+[[rule]]
+id = "windows-app-control.code-integrity"
+type = "wineventlog"
+channel = "Microsoft-Windows-CodeIntegrity/Operational"
+event_ids = [3033, 3034, 3076, 3077]

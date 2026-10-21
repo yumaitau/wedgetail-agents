@@ -1,0 +1,20 @@
+# Preset windows-powershell: PowerShell module, script block and engine events (on by default
+# on Windows). Script block logging (4104) and module logging (4103) are switched on by Group
+# Policy; see presets/windows/recommended-audit-policy.md. Script blocks split over several
+# 4104 events are joined by ScriptBlockId before they are sent (docs/presets/windows.md).
+schema_version = 1
+
+[[rule]]
+id = "windows-powershell.operational"
+type = "wineventlog"
+channel = "Microsoft-Windows-PowerShell/Operational"
+event_ids = [4103, 4104, 4105, 4106]
+
+# Windows PowerShell 5.1 classic log: engine started (400), provider started (600), pipeline
+# execution details (800). 400 shows the host application and engine version, which reveals
+# PowerShell 2.0 downgrades.
+[[rule]]
+id = "windows-powershell.classic"
+type = "wineventlog"
+channel = "Windows PowerShell"
+event_ids = [400, 600, 800]

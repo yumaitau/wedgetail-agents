@@ -1,0 +1,9 @@
+# Preset windows-security-dc (opt-in, for domain controllers): directory service access and
+# changes. 4662 needs SACLs on the directory objects of interest and can be very noisy.
+schema_version = 1
+
+[[rule]]
+id = "windows-security-dc.directory"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4662, 5136, 5137]

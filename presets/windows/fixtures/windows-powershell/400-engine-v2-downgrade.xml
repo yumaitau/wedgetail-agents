@@ -1,0 +1,17 @@
+<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='PowerShell'/><EventID Qualifiers='0'>400</EventID><Version>0</Version><Level>4</Level><Task>4</Task><Opcode>0</Opcode><Keywords>0x80000000000000</Keywords><TimeCreated SystemTime='2026-10-21T08:03:04.1234567Z'/><EventRecordID>7101</EventRecordID><Correlation/><Execution ProcessID='0' ThreadID='0'/><Channel>Windows PowerShell</Channel><Computer>web-01.example.com</Computer><Security/></System><EventData><Data>Available</Data><Data>None</Data><Data>	NewEngineState=Available
+	PreviousEngineState=None
+
+	SequenceNumber=13
+
+	HostName=ConsoleHost
+	HostVersion=2.0
+	HostId=6a1f0b9c-2d3e-4f50-8a61-7b8c9d0e1f2a
+	HostApplication=powershell.exe -Version 2 -NoProfile
+	EngineVersion=2.0
+	RunspaceId=0c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+	PipelineId=
+	CommandName=
+	CommandType=
+	ScriptName=
+	CommandPath=
+	CommandLine=</Data></EventData></Event>

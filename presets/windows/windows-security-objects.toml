@@ -1,0 +1,9 @@
+# Preset windows-security-objects (opt-in): object and share access. Noisy: only enable it
+# with object access auditing scoped by SACLs to the files, keys and shares you care about.
+schema_version = 1
+
+[[rule]]
+id = "windows-security-objects.access"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4656, 4663, 5140, 5145]

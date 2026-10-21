@@ -28,6 +28,7 @@ signal-hook.workspace = true
 [target.'cfg(windows)'.dependencies]
 ctrlc = { version = "3.5", features = ["termination"] }
 windows.workspace = true
+windows-registry.workspace = true
 windows-service.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

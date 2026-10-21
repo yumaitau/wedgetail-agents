@@ -1,0 +1,53 @@
+# Preset windows-operational: scheduled tasks, RDP, WMI, firewall and BITS operational
+# channels (on by default on Windows).
+schema_version = 1
+
+# Task registered (106), updated (140), deleted (141), action started (200) and completed
+# (201). This channel is disabled on some Windows editions ("Enable All Tasks History" in
+# Task Scheduler, or `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`);
+# `wedgetail-agent status` says when it is. The agent never enables it.
+[[rule]]
+id = "windows-operational.task-scheduler"
+type = "wineventlog"
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+event_ids = [106, 140, 141, 200, 201]
+
+# RDP: user authentication succeeded at the network level (1149, with the source address).
+[[rule]]
+id = "windows-operational.rdp-connections"
+type = "wineventlog"
+channel = "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational"
+event_ids = [1149]
+
+# RDP and console sessions: logon (21), shell start (22), logoff (23), disconnect (24),
+# reconnect (25).
+[[rule]]
+id = "windows-operational.rdp-sessions"
+type = "wineventlog"
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+event_ids = [21, 22, 23, 24, 25]
+
+# WMI provider loaded (5857), and permanent event consumers (5860 temporary, 5861 permanent
+# subscription), a common persistence technique.
+[[rule]]
+id = "windows-operational.wmi"
+type = "wineventlog"
+channel = "Microsoft-Windows-WMI-Activity/Operational"
+event_ids = [5857, 5860, 5861]
+
+# Firewall rule added (2004, newer builds 2097), changed (2005, 2099), deleted (2006, 2052),
+# all rules deleted (2033), and a profile setting changed such as the firewall being turned
+# off (2003, newer builds 2082).
+[[rule]]
+id = "windows-operational.firewall"
+type = "wineventlog"
+channel = "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+event_ids = [2003, 2004, 2005, 2006, 2033, 2052, 2082, 2097, 2099]
+
+# BITS transfer job created (59, with the URL) and stopped (60): a common download and
+# persistence channel.
+[[rule]]
+id = "windows-operational.bits"
+type = "wineventlog"
+channel = "Microsoft-Windows-Bits-Client/Operational"
+event_ids = [59, 60]
