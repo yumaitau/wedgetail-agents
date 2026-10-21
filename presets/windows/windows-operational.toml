@@ -38,7 +38,7 @@ event_ids = [5857, 5860, 5861]
 
 # Firewall rule added (2004, newer builds 2097), changed (2005, 2099), deleted (2006, 2052),
 # all rules deleted (2033), and a profile setting changed such as the firewall being turned
-# off (2003, newer builds 2082).
+# off (2003, newer builds 2082). Server 2022 and 2025 both log 2097 for a new rule.
 [[rule]]
 id = "windows-operational.firewall"
 type = "wineventlog"

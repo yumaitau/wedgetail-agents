@@ -190,7 +190,7 @@ without which the events are not written (see the recommended policy).
 | `windows-operational.rdp-connections` | `Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational` | 1149 | RDP network-level authentication succeeded, with user and source address | nothing |
 | `windows-operational.rdp-sessions` | `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational` | 21, 22, 23, 24, 25 | Session logon, shell start, logoff, disconnect, reconnect with source address | nothing |
 | `windows-operational.wmi` | `Microsoft-Windows-WMI-Activity/Operational` | 5857, 5860, 5861 | WMI provider loads, temporary and permanent event subscriptions (WMI persistence) | nothing |
-| `windows-operational.firewall` | `Microsoft-Windows-Windows Firewall With Advanced Security/Firewall` | 2003, 2004, 2005, 2006, 2033, 2052, 2082, 2097, 2099 | Firewall profile settings changed (firewall turned off), rules added, changed, deleted and all rules deleted. Windows 11 and Server 2025 log 2097/2099/2052/2082 where older builds log 2004/2005/2006/2003. | nothing |
+| `windows-operational.firewall` | `Microsoft-Windows-Windows Firewall With Advanced Security/Firewall` | 2003, 2004, 2005, 2006, 2033, 2052, 2082, 2097, 2099 | Firewall profile settings changed (firewall turned off), rules added, changed, deleted and all rules deleted. Builds log different ids for the same change: on the CI runners a rule added is 2097 on both Server 2022 and 2025, and deleted is 2006 on 2022 and 2052 on 2025; older builds use 2004/2005/2006/2003, newer ones 2097/2099/2052/2082, so the rule lists both. | nothing |
 | `windows-operational.bits` | `Microsoft-Windows-Bits-Client/Operational` | 59, 60 | BITS jobs started (with URL) and stopped: downloads and persistence | nothing |
 
 ### windows-app-control
@@ -208,7 +208,8 @@ without which the events are not written (see the recommended policy).
 - **Subscriptions.** Each rule is an `EvtSubscribe` pull subscription on its channel. The event
   id list becomes an XPath filter, `*[System[(EventID=4624 or EventID=4625 ...)]]`, so the
   Event Log service filters before the agent reads anything. The Event Log service refuses
-  expressions with many terms, so an `event_ids` list longer than 20 becomes a structured
+  expressions with many terms (a single 60-term expression fails with "The specified query is
+  invalid" on Server 2025), so an `event_ids` list longer than 20 becomes a structured
   query with one `<Select>` per 20 ids:
 
   ```xml
