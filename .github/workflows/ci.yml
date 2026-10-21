@@ -292,7 +292,7 @@ jobs:
           fi
           # The classes macos-audit keeps; ex records every execve.
           if [ -f /etc/security/audit_control ]; then
-            sudo sed -i '' 's/^flags:.*/flags:lo,aa,ad,ex/' /etc/security/audit_control
+            sudo sed -i '' -e 's/^flags:.*/flags:lo,aa,ad,ex/' -e 's/^naflags:.*/naflags:lo,aa,ad,ex/' /etc/security/audit_control
           fi
           # The launchd job ships disabled; enable and load it, then start auditing.
           sudo launchctl enable system/com.apple.auditd || true
@@ -320,29 +320,34 @@ jobs:
           sudo -k
           sudo /usr/bin/true
           sleep 10
-          buffer="/Library/Application Support/Wedgetail/state/buffer"
-          debug() {
-            sudo wedgetail-agent status || true
-            sudo ls -l "$buffer" || true
-            sudo tail -20 /Library/Logs/Wedgetail/agent.log || true
-            sudo sh -c "grep -aoE '\"rule_id\":\"macos-[a-z]+\.[a-z]+\".{0,250}' \"$buffer\"/*.seg" | tail -30 || true
-          }
-          # macOS 14 writes sudo command lines to the unified log; 15 and later do not.
-          if sudo log show --last 2m --style syslog --predicate 'process == "sudo" AND eventMessage CONTAINS "COMMAND=/usr/bin/true"' | grep -q 'COMMAND=/usr/bin/true'; then
-            if ! sudo sh -c "grep -aqE '\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true' \"$buffer\"/*.seg"; then
-              debug; exit 1
-            fi
-            echo "macos-core.auth buffered the sudo command line"
-          else
-            echo "this macOS does not log sudo command lines to the unified log"
-          fi
-          # With flags ex, the execve of /usr/bin/true is in the trail.
-          if $audit; then
-            if ! sudo sh -c "grep -aqF '\"exec_args\":[\"/usr/bin/true\"]' \"$buffer\"/*.seg"; then
-              debug; sudo ls -l /var/audit; exit 1
-            fi
-            echo "macos-audit.trail buffered the execve of /usr/bin/true"
-          fi
+          # Read the buffered wire lines back and check for the two events.
+          sudo cat "/Library/Application Support/Wedgetail/state/buffer/"*.seg > buffer.bin
+          sudo log show --last 3m --style syslog --predicate 'process == "sudo"' > sudo.log || true
+          python3 - "$audit" <<'PY'
+          import collections, json, re, sys
+          data = open("buffer.bin", "rb").read().decode("utf-8", "replace")
+          dec, events, i = json.JSONDecoder(), [], 0
+          while (i := data.find('{"v":1,', i)) >= 0:
+              try:
+                  ev, end = dec.raw_decode(data, i)
+                  events.append(ev)
+                  i = end
+              except ValueError:
+                  i += 1
+          print(collections.Counter(e["rule_id"] for e in events))
+          logged = "COMMAND=/usr/bin/true" in open("sudo.log").read()
+          sudo = [e for e in events if e["rule_id"] == "macos-core.auth"
+                  and "COMMAND=/usr/bin/true" in e["fields"].get("eventMessage", "")]
+          print("sudo command line in the unified log:", logged, "buffered:", len(sudo))
+          execs = [e for e in events if e["rule_id"] == "macos-audit.trail"
+                   and e["fields"].get("exec_args") == ["/usr/bin/true"]]
+          print("audit trail on:", sys.argv[1], "execve of /usr/bin/true buffered:", len(execs))
+          for e in [e for e in events if e["rule_id"] == "macos-audit.trail"][:5]:
+              print(json.dumps(e["fields"])[:300])
+          # macOS 14 logs sudo command lines; 15 and later do not.
+          assert sudo or not logged, "sudo line not buffered"
+          assert execs or sys.argv[1] != "true", "execve record not buffered"
+          PY
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
