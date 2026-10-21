@@ -154,6 +154,10 @@ if ($status.windows.audit_policy.off.subcategory -contains 'Process Creation') {
 if ($status.windows.process_command_line -ne $true) { throw 'command line inclusion not reported as on' }
 if ($status.windows.channels.channel -contains 'Microsoft-Windows-TaskScheduler/Operational') { throw 'TaskScheduler channel still reported' }
 Write-Host 'PASS status follows the policy changes'
+# A subscription made while a channel was disabled gets nothing once it is enabled: reload
+# (as docs/presets/windows.md says) so the agent subscribes again.
+sc.exe control WedgetailAgent paramchange | Out-Null
+Start-Sleep -Seconds 10
 
 Section 'Round 1: generate events for each preset'
 AppEvent "wt-e2e-$run one"

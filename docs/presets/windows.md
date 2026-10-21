@@ -108,7 +108,9 @@ lists the recommended settings with their Microsoft and ASD sources.
 - a warning when 4688 process creation events do not include the command line (registry value
   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit\ProcessCreationIncludeCmdLine_Enabled`);
 - channels used by enabled rules that do not exist on the host or are disabled (for example
-  Task Scheduler history).
+  Task Scheduler history). A subscription made while its channel was disabled receives
+  nothing after the channel is enabled, so reload the agent (`sc.exe control WedgetailAgent
+  paramchange`) after enabling one.
 
 `status --json` has the same in a `windows` object:
 

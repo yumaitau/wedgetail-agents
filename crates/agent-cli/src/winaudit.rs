@@ -457,8 +457,12 @@ pub fn format_report(w: &Value) -> String {
             .flatten()
             .filter_map(Value::as_str)
             .collect();
+        let hint = match c["state"].as_str() {
+            Some("disabled") => "; enable it, then reload the agent",
+            _ => "",
+        };
         lines.push(format!(
-            "  channel {}: {} (rules {})",
+            "  channel {}: {} (rules {}){hint}",
             c["channel"].as_str().unwrap_or("?"),
             c["state"].as_str().unwrap_or("?"),
             rules.join(", ")
@@ -633,7 +637,7 @@ mod tests {
         let w = report(Err("x"), None, &channels, &[]);
         assert_eq!(w["channels"][0]["state"], "disabled");
         assert!(format_report(&w).contains(
-            "channel Microsoft-Windows-TaskScheduler/Operational: disabled (rules windows-operational.task-scheduler)"
+            "channel Microsoft-Windows-TaskScheduler/Operational: disabled (rules windows-operational.task-scheduler); enable it, then reload the agent"
         ));
     }
 }

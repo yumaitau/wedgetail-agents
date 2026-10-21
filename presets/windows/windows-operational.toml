@@ -5,7 +5,8 @@ schema_version = 1
 # Task registered (106), updated (140), deleted (141), action started (200) and completed
 # (201). This channel is disabled on some Windows editions ("Enable All Tasks History" in
 # Task Scheduler, or `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`);
-# `wedgetail-agent status` says when it is. The agent never enables it.
+# `wedgetail-agent status` says when it is. The agent never enables it; reload the agent
+# after enabling it.
 [[rule]]
 id = "windows-operational.task-scheduler"
 type = "wineventlog"
