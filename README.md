@@ -23,9 +23,9 @@ It does not:
 - use OpenSSL: TLS is [rustls](https://github.com/rustls/rustls) (TLS 1.2 and 1.3) with the
   operating system's certificate verifier, and plain `http://` endpoints are refused.
 
-> Status: early. This release has the runtime, collectors and packaging. Enrolment (per-host
-> credentials), the TOML rule schema with redaction rules, and the per-OS presets are coming in
-> the next releases; `wedgetail-agent enrol` currently reports that it is not available.
+> Status: early. This release has the runtime, collectors, packaging and enrolment with
+> per-host credentials. The TOML rule schema with redaction rules and the per-OS presets are
+> coming in the next releases.
 
 ## Install
 
@@ -40,18 +40,24 @@ with `SHA256SUMS`, a CycloneDX SBOM and Sigstore signatures (see "Verifying a re
 | macOS | `wedgetail-agent-<v>-universal.pkg` | launchd `au.com.yumait.wedgetail-agent`, root (see below) |
 
 Linux builds are static (musl) for x86_64 and aarch64. After installing, set `endpoint` in the
-config file and start the service; a fresh install does not start until it is configured.
+config file, enrol the host with a token from the Wedgetail console and start the service; a
+fresh install does not start until it is configured.
 
 ```sh
 sudoedit /etc/wedgetail-agent/agent.toml
 sudo wedgetail-agent check-config
+sudo wedgetail-agent enrol < token.txt     # or WEDGETAIL_ENROL_TOKEN, or the prompt
 sudo systemctl enable --now wedgetail-agent
 sudo wedgetail-agent status
 ```
 
+The enrolment token is never accepted on the command line. See
+[docs/enrolment.md](docs/enrolment.md) for enrolment, where the host credential is stored on
+each OS, rotation and revocation.
+
 ## Configuration
 
-| | Config | State (buffer, checkpoints, status, credential) |
+| | Config | State (buffer, checkpoints, status, enrolment; the credential on Linux and Windows) |
 | --- | --- | --- |
 | Linux | `/etc/wedgetail-agent/agent.toml`, `rules.d/*.toml` | `/var/lib/wedgetail-agent/` |
 | Windows | `%ProgramData%\Wedgetail\agent.toml`, `rules.d\*.toml` | `%ProgramData%\Wedgetail\state\` |
@@ -93,15 +99,22 @@ child process. Linux and Windows figures on real hosts are still to be measured.
   refuses non-admin users, and an admin service account would also be able to use sudo.
 - **No inbound surface.** No listener, no remote commands, no shell, no self-update. Updates
   come from your OS package manager or a signed release.
-- **Secrets stay off disk.** The redaction hook runs before the disk buffer. The host
-  credential is never logged; `Debug` output redacts it.
-- **Transport.** HTTPS only, rustls with the OS verifier, redirects not followed. The server
-  stamps host identity from the credential and never trusts host fields in events.
+- **Secrets stay off disk.** The redaction hook runs before the disk buffer.
+- **Per-host credentials.** Each host enrols once with a short-lived token (read from standard
+  input, an environment variable or a no-echo prompt, never from arguments) and gets its own
+  credential, which rotates automatically (30 days by default) and can be revoked alone. It is
+  stored in a `0600` file owned by the service account on Linux, with DPAPI (machine scope)
+  in a file only SYSTEM, Administrators and LocalService can read on Windows, and in the
+  System keychain on macOS. Tokens and credentials are never logged or printed. See
+  [docs/enrolment.md](docs/enrolment.md).
+- **Transport.** HTTPS only (TLS 1.2 and 1.3), rustls with the OS certificate verifier and no
+  way to turn verification off, redirects not followed. The server stamps host identity from
+  the credential and never trusts host fields in events.
 - **Durability.** Buffer writes are fsynced; each batch has a stable id that is reused after a
   crash so the server can drop the repeat. At most the unacknowledged batch is resent.
 - **Unsafe code** is forbidden except in the small Windows FFI modules
-  (`crates/agent-collectors/src/os/windows`, `crates/agent-cli/src/os/windows`), each with
-  `SAFETY` notes.
+  (`crates/agent-collectors/src/os/windows`, `crates/agent-cli/src/os/windows`: event log,
+  service entry point, DPAPI and file ACLs), each with `SAFETY` notes.
 
 Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
@@ -125,8 +138,11 @@ Static Linux build: `rustup target add x86_64-unknown-linux-musl`, install `musl
 ```text
 crates/agent-config      agent.toml + rules.d loading and validation
 crates/agent-collectors  Collector trait; file tail, journald, Windows Event Log, macOS unified log
-crates/agent-core        pipeline, redaction hook, disk buffer, batching, shipper, heartbeat
-crates/agent-cli         the wedgetail-agent binary and Windows service glue
+crates/agent-core        pipeline, redaction hook, disk buffer, batching, shipper, heartbeat,
+                         enrolment client, credential rotation, Linux credential file
+crates/agent-cli         the wedgetail-agent binary, enrol command, Windows service glue,
+                         DPAPI (Windows) and System keychain (macOS) credential stores
+docs/                    enrolment.md: enrolment, credential storage, rotation, revocation
 packaging/               systemd unit, launchd plist, WiX source, deb/rpm scripts, pkg builder
 ```
 
