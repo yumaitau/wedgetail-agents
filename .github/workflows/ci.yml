@@ -317,18 +317,27 @@ jobs:
           sudo /usr/bin/true
           sleep 10
           buffer="/Library/Application Support/Wedgetail/state/buffer"
-          if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true' \"$buffer\"/*.seg"; then
-            sudo sh -c "grep -aoE '\"eventMessage\":\"[^\"]{0,160}\",\"eventType\":\"[a-zA-Z]+\",\"messageType\":\"[A-Za-z]+\",\"process\":\"[^\"]+\"' \"$buffer\"/*.seg" | sort | uniq -c | sort -rn | head -40
-            sudo log show --last 2m --style ndjson --info --predicate 'process == "sudo"' | grep -o '"eventMessage":"[^"]*","eventType":"[a-zA-Z]*","source":[a-z]*,"formatString":"[^"]*"\|"messageType":"[A-Za-z]*"\|"formatString":"[^"]*"\|"eventMessage":"[^"]*"' | sort | uniq -c | head -40
-            exit 1
+          debug() {
+            sudo wedgetail-agent status || true
+            sudo ls -l "$buffer" || true
+            sudo tail -20 /Library/Logs/Wedgetail/agent.log || true
+            sudo sh -c "grep -aoE '\"eventMessage\":\"[^\"]{0,120}\",\"eventType\":\"[a-zA-Z]+\",\"messageType\":\"[A-Za-z]+\",\"process\":\"[^\"]+\"' \"$buffer\"/*.seg" | sort | uniq -c | sort -rn | head -30 || true
+          }
+          # macOS 14 writes sudo command lines to the unified log; 15 and later do not.
+          if sudo log show --last 2m --style syslog --predicate 'process == "sudo" AND eventMessage CONTAINS "COMMAND=/usr/bin/true"' | grep -q 'COMMAND=/usr/bin/true'; then
+            if ! sudo sh -c "grep -aqE '\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true' \"$buffer\"/*.seg"; then
+              debug; exit 1
+            fi
+            echo "macos-core.auth buffered the sudo command line"
+          else
+            echo "this macOS does not log sudo command lines to the unified log"
           fi
           # sudo is class aa, which the default audit_control flags (lo,aa) record.
           if $audit; then
-            if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"' \"$buffer\"/*.seg"; then
-              sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\".{0,250}' \"$buffer\"/*.seg" | tail -20
-              sudo ls -l /var/audit
-              exit 1
+            if ! sudo sh -c "grep -aqE '\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"' \"$buffer\"/*.seg"; then
+              debug; sudo ls -l /var/audit; exit 1
             fi
+            echo "macos-audit.trail buffered AUE_sudo"
           fi
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \

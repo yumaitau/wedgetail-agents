@@ -89,8 +89,9 @@ unless a profile enables private data).
 `macos_unified`, `source_type` `macos.unified`, level `default`.
 
 ```text
-eventType == "logEvent" AND (
-  process == "sudo" OR process == "su" OR process == "login"
+eventType == "logEvent" AND NOT eventMessage BEGINSWITH "Too many groups requested" AND (
+  (process == "sudo" AND eventMessage CONTAINS " ; ")
+  OR process == "su" OR process == "login"
   OR process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"
   OR process == "SecurityAgent"
   OR subsystem == "com.apple.Authorization"
@@ -102,7 +103,11 @@ eventType == "logEvent" AND (
 ```
 
 - `sudo`, `su`, `login`: command lines and failures, for example
-  `alice : 3 incorrect password attempts ; TTY=ttys001 ; PWD=/Users/alice ; USER=root ; COMMAND=/usr/bin/true`.
+  `alice : 3 incorrect password attempts ; TTY=ttys001 ; PWD=/Users/alice ; USER=root ; COMMAND=/usr/bin/true`
+  or `  runner : TTY=... ; PWD=... ; USER=root ; COMMAND=/usr/local/bin/wedgetail-agent status`
+  (seen on macOS 14). Only `sudo` lines with the ` ; ` field separator are kept: every
+  `sudo` run also logs `Reading config`, and `libsystem_info` logs
+  `Too many groups requested (...)` for many processes, which is dropped for all of them.
 - `sshd`, and `sshd-session`/`sshd-auth` (OpenSSH 9.8 and later, macOS 15 and later, split
   the server into these processes): `Accepted publickey for alice from 192.0.2.10 port 52113 ssh2: ...`,
   `Failed password for invalid user admin from 203.0.113.50 port 40022 ssh2`.

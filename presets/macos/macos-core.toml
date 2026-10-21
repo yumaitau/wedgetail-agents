@@ -17,8 +17,9 @@ id = "macos-core.auth"
 type = "macos_unified"
 level = "default"
 predicate = '''
-eventType == "logEvent" AND (
-  process == "sudo" OR process == "su" OR process == "login"
+eventType == "logEvent" AND NOT eventMessage BEGINSWITH "Too many groups requested" AND (
+  (process == "sudo" AND eventMessage CONTAINS " ; ")
+  OR process == "su" OR process == "login"
   OR process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"
   OR process == "SecurityAgent"
   OR subsystem == "com.apple.Authorization"
