@@ -537,14 +537,20 @@ mod tests {
 
     #[test]
     fn rules_of_each_type() {
-        let config = parse_ok(
+        // An absolute path on this OS.
+        let log = if cfg!(windows) {
+            r"C:\logs\access.log"
+        } else {
+            "/var/log/nginx/access.log"
+        };
+        let config = parse_ok(&format!(
             r#"
 [[rule]]
 id = "local.nginx"
 type = "file"
-paths = ["/var/log/nginx/access.log"]
+paths = ['{log}']
 source_label = "web/nginx"
-tags = { env = "prod" }
+tags = {{ env = "prod" }}
 
 [[rule]]
 id = "ssh"
@@ -561,8 +567,8 @@ event_ids = [4624, 4625]
 id = "macos.auth"
 type = "macos_unified"
 predicate = "subsystem == \"com.apple.Authorization\""
-"#,
-        );
+"#
+        ));
         assert_eq!(config.rules.len(), 4);
         assert_eq!(config.rules[0].source_type(), "file");
         assert_eq!(config.rules[2].source_type(), "windows.eventlog");
