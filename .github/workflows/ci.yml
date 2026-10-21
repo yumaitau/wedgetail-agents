@@ -287,6 +287,16 @@ jobs:
           sudo cat /Library/Logs/Wedgetail/agent.log
           sudo wedgetail-agent status
           sudo wedgetail-agent status --json | grep -q '"state": "running"'
+          # "auto" presets as the root daemon: macos-core always, macos-audit when auditd has
+          # a trail. A real event: sudo logs its command line, which macos-core.auth buffers.
+          sudo wedgetail-agent status --json | grep -q '"macos-core.auth"'
+          if sudo test -e /var/audit/current; then
+            sudo wedgetail-agent status --json | grep -q '"macos-audit.trail"'
+          fi
+          sudo -k
+          sudo /usr/bin/true
+          sleep 5
+          sudo sh -c 'grep -ac "\"source_type\":\"macos.unified\",\"rule_id\":\"macos-core.auth\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
