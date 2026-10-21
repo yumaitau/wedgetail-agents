@@ -29,9 +29,13 @@ Contents:
 - macOS 13 or later for Background Task Management events (`macos-core.persistence`); the
   other rules work on any macOS with the unified log. Only macOS 26 on Apple silicon has been
   tested so far (see [the last section](#what-was-tested-and-what-was-not)).
-- `macos-audit` needs auditd running. Apple deprecated it in macOS 11; on recent releases it
-  is often not configured at all (`/etc/security/audit_control` absent), in which case
-  `"auto"` does not select the preset. When it is configured, `flags` in
+- `macos-audit` needs auditd running. Apple deprecated audit(4) in macOS 11 and turned it off
+  by default from macOS 14 (no `/etc/security/audit_control`, launchd job `com.apple.auditd`
+  disabled), so on a default install `"auto"` does not select the preset. Apple's notice in
+  `/etc/security/audit_control.example` gives the way back while it still exists: copy that
+  file to `/etc/security/audit_control`, run `sudo launchctl enable system/com.apple.auditd`,
+  and reboot. Apple says audit(4) will be removed in a future macOS; Endpoint Security
+  ([macos-es.md](macos-es.md)) is the long-term replacement. When it is configured, `flags` in
   `/etc/security/audit_control` decide what reaches the trail; to have all four classes the
   preset keeps, use at least `flags:lo,aa,ad,ex` (the macOS default was `lo,aa`). `ex` adds an
   event for every `execve`, which is busy on a developer Mac; on macOS most programs start

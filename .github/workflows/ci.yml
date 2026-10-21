@@ -318,13 +318,14 @@ jobs:
           sleep 10
           buffer="/Library/Application Support/Wedgetail/state/buffer"
           if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true' \"$buffer\"/*.seg"; then
-            sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]{0,400}' \"$buffer\"/*.seg" | tail -20
+            sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]{0,250}' \"$buffer\"/*.seg" | tail -20
+            log show --last 2m --style syslog --predicate 'process == "sudo"' | tail -20
             exit 1
           fi
           # sudo is class aa, which the default audit_control flags (lo,aa) record.
           if $audit; then
             if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"' \"$buffer\"/*.seg"; then
-              sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\".{0,400}' \"$buffer\"/*.seg" | tail -20
+              sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\".{0,250}' \"$buffer\"/*.seg" | tail -20
               sudo ls -l /var/audit
               exit 1
             fi
