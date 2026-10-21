@@ -470,7 +470,7 @@ reload), and `check-config` shows it as disabled.
 | --- | --- |
 | Linux | `linux-core`, `linux-auditd`, `linux-containers`: [docs/presets/linux.md](presets/linux.md) |
 | macOS | `macos-core`, `macos-audit` (`macos-es` is phase 2): [docs/presets/macos.md](presets/macos.md) |
-| Windows | `windows-security`, `windows-security-objects`, `windows-security-dc`, `windows-system`, `windows-powershell`, `windows-sysmon`, `windows-defender`, `windows-operational`, `windows-app-control`: [docs/presets/windows.md](presets/windows.md) |
+| Windows | `windows-security`, `windows-security-objects`, `windows-security-dc`, `windows-system`, `windows-powershell`, `windows-sysmon`, `windows-defender`, `windows-operational`, `windows-app-control`, `windows-app-control-allowed`: [docs/presets/windows.md](presets/windows.md) |
 
 ## Compatibility
 

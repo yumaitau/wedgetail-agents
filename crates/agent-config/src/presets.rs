@@ -131,6 +131,13 @@ pub static BUILTIN: &[Preset] = &[
         auto: Auto::Default,
         toml: include_str!("../../../presets/windows/windows-app-control.toml"),
     },
+    // AppLocker allowed events (ISM-1660): one per allowed program start, so opt-in.
+    Preset {
+        id: "windows-app-control-allowed",
+        os: "windows",
+        auto: Auto::OptIn,
+        toml: include_str!("../../../presets/windows/windows-app-control-allowed.toml"),
+    },
     // macOS (docs/presets/macos.md).
     Preset {
         id: "macos-core",

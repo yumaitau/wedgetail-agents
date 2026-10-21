@@ -31,6 +31,7 @@ Contents:
 | `windows-defender` | when the Defender channel exists | `Microsoft-Windows-Windows Defender/Operational` |
 | `windows-operational` | yes | Task Scheduler, RDP (RemoteConnectionManager, LocalSessionManager), WMI-Activity, Windows Firewall, BITS |
 | `windows-app-control` | yes | `Microsoft-Windows-AppLocker/*` (4 channels), `Microsoft-Windows-CodeIntegrity/Operational` |
+| `windows-app-control-allowed` | no (opt-in, high volume) | `Microsoft-Windows-AppLocker/*` (4 channels) |
 
 Detection for `windows-sysmon` and `windows-defender` is a registry lookup under
 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels`; it runs when the agent
@@ -40,6 +41,7 @@ starts or reloads. The agent never installs or configures Sysmon or Defender.
 [agent]
 presets = ["auto", "windows-security-dc"]      # a domain controller
 # presets = ["auto", "windows-security-objects"] # file servers with SACLs on shares
+# presets = ["auto", "windows-app-control-allowed"] # ISM-1660: allowed executions too
 ```
 
 The preset files are [`presets/windows`](../../presets/windows). `wedgetail-agent
@@ -202,6 +204,36 @@ without which the events are not written (see the recommended policy).
 | `windows-app-control.applocker-packaged-execution` | `Microsoft-Windows-AppLocker/Packaged app-Execution` | 8021, 8022 | Packaged apps that would be or were blocked (WT-ENDPOINT-009) | An AppLocker policy |
 | `windows-app-control.applocker-packaged-deployment` | `Microsoft-Windows-AppLocker/Packaged app-Deployment` | 8024, 8025 | Packaged app installs that would be or were blocked | An AppLocker policy |
 | `windows-app-control.code-integrity` | `Microsoft-Windows-CodeIntegrity/Operational` | 3033, 3034, 3076, 3077 | Images failing signing requirements, App Control for Business (WDAC) audit and block events (WT-ENDPOINT-010 to 012) | An App Control policy for 3076/3077 |
+
+Audit mode (8003, 8006, 8021, 8024, 3034, 3076) and enforced blocks (8004, 8007, 8022, 8025,
+3033, 3077) are both on by default. Allowed executions are in the opt-in preset below.
+
+### windows-app-control-allowed (opt-in, high volume)
+
+| Rule id | Channel | Event ids | Detection value | Needs |
+| --- | --- | --- | --- | --- |
+| `windows-app-control-allowed.applocker-exe` | `Microsoft-Windows-AppLocker/EXE and DLL` | 8002 | Executables and DLLs allowed to run, with the matching AppLocker rule, file path, hash and publisher | An AppLocker policy (enforced or audit) |
+| `windows-app-control-allowed.applocker-script` | `Microsoft-Windows-AppLocker/MSI and Script` | 8005 | MSI files and scripts allowed to run, with the matching rule | An AppLocker policy (enforced or audit) |
+| `windows-app-control-allowed.applocker-packaged-execution` | `Microsoft-Windows-AppLocker/Packaged app-Execution` | 8020 | Packaged apps allowed to run, with the matching rule and publisher | An AppLocker policy with packaged app rules |
+| `windows-app-control-allowed.applocker-packaged-deployment` | `Microsoft-Windows-AppLocker/Packaged app-Deployment` | 8023 | Packaged app installs allowed, with the matching rule and publisher | An AppLocker policy with packaged app rules |
+
+ISM-1660 asks for allowed **and** blocked application control events to be centrally logged.
+`windows-app-control` gives the blocked and audit half on every host; add
+`windows-app-control-allowed` to `presets` on hosts where you need the allowed half as
+evidence. It covers every AppLocker rule collection: EXE and DLL (8002), MSI and script
+(8005), packaged app execution (8020) and packaged app installation (8023).
+
+```toml
+[agent]
+presets = ["auto", "windows-app-control-allowed"]
+```
+
+It is opt-in because of volume: AppLocker writes one 8002 event for every allowed program
+start (roughly the rate of 4688 process creation), one 8020 for every packaged app start, and
+when DLL rules are enforced one 8002 for every DLL load, which can be thousands an hour per
+workstation. If the EXE and DLL volume is too high, keep the other three rules with
+`disable_rules = ["windows-app-control-allowed.applocker-exe"]`. App Control for Business
+allowed events are not collected: App Control does not log allowed files by default.
 
 ## How events are collected
 
