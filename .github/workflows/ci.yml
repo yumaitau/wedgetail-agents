@@ -315,11 +315,19 @@ jobs:
           fi
           sudo -k
           sudo /usr/bin/true
-          sleep 5
-          sudo sh -c 'grep -aoE "\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+          sleep 10
+          buffer="/Library/Application Support/Wedgetail/state/buffer"
+          if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true' \"$buffer\"/*.seg"; then
+            sudo sh -c "grep -aoE '\"rule_id\":\"macos-core\.auth\"[^}]{0,400}' \"$buffer\"/*.seg" | tail -20
+            exit 1
+          fi
           # sudo is class aa, which the default audit_control flags (lo,aa) record.
           if $audit; then
-            sudo sh -c 'grep -aoE "\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+            if ! sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"' \"$buffer\"/*.seg"; then
+              sudo sh -c "grep -aoE '\"rule_id\":\"macos-audit\.trail\".{0,400}' \"$buffer\"/*.seg" | tail -20
+              sudo ls -l /var/audit
+              exit 1
+            fi
           fi
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
