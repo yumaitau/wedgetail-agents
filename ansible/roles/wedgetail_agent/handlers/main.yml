@@ -1,0 +1,7 @@
+---
+# SIGHUP: a valid configuration is applied, an invalid one is logged and the running one kept.
+- name: Reload wedgetail-agent
+  ansible.builtin.systemd_service:
+    name: wedgetail-agent
+    state: reloaded
+  when: wedgetail_agent_service_state == 'started'

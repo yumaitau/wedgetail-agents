@@ -1,0 +1,28 @@
+{#- TOML for values from YAML: strings, numbers, booleans, lists and mappings (inline tables). -#}
+{%- macro key(k) -%}
+{{ k if k is match('^[A-Za-z0-9_-]+$') else (k | string | to_json) }}
+{%- endmacro -%}
+{%- macro value(v) -%}
+{%- if v is boolean -%}
+{{ 'true' if v else 'false' }}
+{%- elif v is number -%}
+{{ v }}
+{%- elif v is string -%}
+{{ v | to_json }}
+{%- elif v is mapping -%}
+{ {% for k in v %}{{ key(k) }} = {{ value(v[k]) }}{{ ', ' if not loop.last else '' }}{% endfor %} }
+{%- elif v is iterable -%}
+[{% for x in v %}{{ value(x) }}{{ ', ' if not loop.last else '' }}{% endfor %}]
+{%- else -%}
+{{ v | string | to_json }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro rules(list) -%}
+{%- for rule in list %}
+
+[[rule]]
+{% for k in rule -%}
+{{ key(k) }} = {{ value(rule[k]) }}
+{% endfor -%}
+{%- endfor -%}
+{%- endmacro -%}

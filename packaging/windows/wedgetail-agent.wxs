@@ -4,15 +4,30 @@
 
     wix build packaging/windows/wedgetail-agent.wxs -arch x64 \
       -d Version=0.1.0 -d BinPath=target\x86_64-pc-windows-msvc\release\wedgetail-agent.exe \
+      -d CaPath=target\x86_64-pc-windows-msvc\release\wedgetail_msi.dll \
       -d ConfigPath=packaging\common\agent.toml -o wedgetail-agent.msi
 
   Installs the binary and the WedgetailAgent service (NT AUTHORITY\LocalService, automatic
-  start, not started at install because it needs an endpoint and enrolment first). The state
-  directory is writable only by SYSTEM, Administrators and LocalService. agent.toml is kept on
-  upgrade and uninstall.
+  start). The state directory is writable only by SYSTEM, Administrators and LocalService.
+  agent.toml is kept on upgrade and uninstall.
 
-  The presets need LocalService in the "Event Log Readers" group (Security and Sysmon
-  channels); the installer does not change group membership. See docs/presets/windows.md.
+  Public properties, for msiexec, Intune and Group Policy transforms (packaging/windows/README.md):
+
+    ENDPOINT               ingest URL: written to [agent] endpoint in agent.toml (the rest of
+                           the file is kept; checked with check-config first), and the service
+                           is started at the end of the install. Without it the service is not
+                           started, as it needs an endpoint first.
+    PRESETS                auto, none or a comma-separated list of preset ids, written to
+                           [agent] presets together with ENDPOINT.
+    ENROLTOKEN             enrolment token (hidden: never in the installer log). Given to
+                           `wedgetail-agent enrol` on standard input; skipped when the host is
+                           already enrolled. A failed enrolment fails the install.
+    ADD_EVENT_LOG_READERS  1 (default) adds NT AUTHORITY\LOCAL SERVICE to Event Log Readers,
+                           which the Security and Sysmon presets need; 0 leaves group
+                           membership alone. Not undone on uninstall.
+
+  The custom actions are in wedgetail_msi.dll (crates/agent-msi), deferred and run as
+  LocalSystem.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Wedgetail Agent" Manufacturer="Yuma IT" Version="$(var.Version)"
@@ -21,6 +36,35 @@
     <MediaTemplate EmbedCab="yes" />
     <Property Id="ARPCONTACT" Value="Yuma IT &lt;wedgetail@yumait.au&gt;" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/yumaitau/wedgetail-agents" />
+
+    <Property Id="ENDPOINT" Secure="yes" />
+    <Property Id="PRESETS" Secure="yes" />
+    <Property Id="ENROLTOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="ADD_EVENT_LOG_READERS" Value="1" Secure="yes" />
+    <!-- The enrol action's data holds the token, so it is hidden from the log as well. -->
+    <Property Id="WedgetailEnrol" Hidden="yes" />
+
+    <Binary Id="WedgetailCA" SourceFile="$(var.CaPath)" />
+    <CustomAction Id="WedgetailConfigure" BinaryRef="WedgetailCA" DllEntry="WedgetailConfigure"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="WedgetailEnrol" BinaryRef="WedgetailCA" DllEntry="WedgetailEnrol"
+                  Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
+    <CustomAction Id="WedgetailEventLogReaders" BinaryRef="WedgetailCA" DllEntry="WedgetailEventLogReaders"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- CustomActionData for the deferred actions, "|"-separated (the last field may hold "|"). -->
+    <SetProperty Id="WedgetailConfigure" Value="[INSTALLFOLDER]wedgetail-agent.exe|[DataFolder]agent.toml|[PRESETS]|[ENDPOINT]"
+                 Before="WedgetailConfigure" Sequence="execute" />
+    <SetProperty Id="WedgetailEnrol" Value="[INSTALLFOLDER]wedgetail-agent.exe|[DataFolder]agent.toml|[StateFolder]|[ENROLTOKEN]"
+                 Before="WedgetailEnrol" Sequence="execute" />
+    <!-- After the files and folders (with their ACLs) are in place, before the service starts. -->
+    <InstallExecuteSequence>
+      <Custom Action="WedgetailConfigure" After="InstallFiles"
+              Condition="ENDPOINT AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="WedgetailEnrol" After="WedgetailConfigure"
+              Condition="ENROLTOKEN AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="WedgetailEventLogReaders" After="WedgetailEnrol"
+              Condition="ADD_EVENT_LOG_READERS=&quot;1&quot; AND NOT (REMOVE~=&quot;ALL&quot;)" />
+    </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Wedgetail Agent">
@@ -31,6 +75,11 @@
                           Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
                           Account="NT AUTHORITY\LocalService" Arguments="run --service" />
           <ServiceControl Id="AgentServiceControl" Name="WedgetailAgent" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+        <!-- Installed only with ENDPOINT: the agent is configured, so start it. -->
+        <Component Id="AgentServiceStart" Guid="0E9B7E1C-7A43-4C1B-9D2A-5B8F3C6E21A4" Condition="ENDPOINT" KeyPath="yes">
+          <CreateFolder />
+          <ServiceControl Id="AgentServiceStartControl" Name="WedgetailAgent" Start="install" Wait="no" />
         </Component>
       </Directory>
     </StandardDirectory>
@@ -53,6 +102,7 @@
 
     <Feature Id="Main" Title="Wedgetail Agent">
       <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="AgentServiceStart" />
       <ComponentRef Id="AgentConfig" />
       <ComponentRef Id="StateDir" />
     </Feature>

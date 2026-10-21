@@ -1,0 +1,14 @@
+---
+# Fixed by the packages.
+wedgetail_agent__config_dir: /etc/wedgetail-agent
+wedgetail_agent__config_path: /etc/wedgetail-agent/agent.toml
+wedgetail_agent__service: wedgetail-agent
+wedgetail_agent__user: wedgetail-agent
+wedgetail_agent__deb_arch:
+  x86_64: amd64
+  aarch64: arm64
+# Release file names (cargo-deb and cargo-generate-rpm).
+wedgetail_agent__deb_name: >-
+  wedgetail-agent_{{ wedgetail_agent_version }}-{{ wedgetail_agent_package_revision }}_{{ wedgetail_agent__deb_arch[ansible_facts['architecture']] }}.deb
+wedgetail_agent__rpm_name: >-
+  wedgetail-agent-{{ wedgetail_agent_version }}-{{ wedgetail_agent_package_revision }}.{{ ansible_facts['architecture'] }}.rpm

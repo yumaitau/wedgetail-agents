@@ -1,0 +1,58 @@
+---
+- name: Check an endpoint is set
+  ansible.builtin.assert:
+    that: >-
+      wedgetail_agent_endpoint | length > 0
+      or wedgetail_agent_config_template != 'agent.toml.j2'
+    fail_msg: >-
+      Set wedgetail_agent_endpoint to your Wedgetail ingest URL (https://...); the agent does
+      not start without it.
+    quiet: true
+
+- name: Create the rules.d directory
+  ansible.builtin.file:
+    path: "{{ wedgetail_agent__config_dir }}/rules.d"
+    state: directory
+    owner: root
+    group: "{{ wedgetail_agent__user }}"
+    mode: "0750"
+
+- name: Write agent.toml
+  ansible.builtin.template:
+    src: "{{ wedgetail_agent_config_template }}"
+    dest: "{{ wedgetail_agent__config_path }}"
+    owner: root
+    group: "{{ wedgetail_agent__user }}"
+    mode: "0640"
+  notify: Reload wedgetail-agent
+
+- name: Write the rules.d files
+  ansible.builtin.template:
+    src: rules_d.toml.j2
+    dest: "{{ wedgetail_agent__config_dir }}/rules.d/{{ item.key }}.toml"
+    owner: root
+    group: "{{ wedgetail_agent__user }}"
+    mode: "0640"
+  loop: "{{ wedgetail_agent_rules_d | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}.toml"
+  notify: Reload wedgetail-agent
+
+- name: Remove rules.d files the role does not manage
+  when: wedgetail_agent_rules_d_exclusive | bool
+  block:
+    - name: List the rules.d files
+      ansible.builtin.find:
+        paths: "{{ wedgetail_agent__config_dir }}/rules.d"
+        patterns: "*.toml"
+      register: wedgetail_agent__rules_d_found
+
+    - name: Remove the unmanaged rules.d files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ wedgetail_agent__rules_d_found.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: (item.path | basename | regex_replace('\.toml$', '')) not in wedgetail_agent_rules_d
+      notify: Reload wedgetail-agent

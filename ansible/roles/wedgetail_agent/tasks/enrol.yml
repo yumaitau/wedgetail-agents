@@ -1,0 +1,32 @@
+---
+# enrolment.json is written by a successful enrol. Without force, a host that has one is left
+# alone and the token is not used (enrol itself also refuses to replace an enrolment).
+- name: Look for an existing enrolment
+  ansible.builtin.stat:
+    path: "{{ wedgetail_agent_state_dir }}/enrolment.json"
+  register: wedgetail_agent__enrolment
+
+# The token goes to the agent on standard input: never in its arguments (the process list) or
+# its environment. no_log keeps it out of the output, callbacks and the host's journal, and
+# pipelining sends the module arguments over the connection instead of a temporary file.
+- name: Enrol with the token on standard input
+  ansible.builtin.command:
+    argv: >-
+      {{ ['wedgetail-agent', 'enrol', '--token-stdin', '--config', wedgetail_agent__config_path]
+         + (['--force'] if wedgetail_agent_enrol_force | bool else []) }}
+    stdin: "{{ wedgetail_agent_enrol_token }}"
+  vars:
+    ansible_pipelining: "{{ wedgetail_agent_enrol_pipelining | bool }}"
+  no_log: true
+  register: wedgetail_agent__enrol
+  changed_when: wedgetail_agent__enrol.rc == 0
+  failed_when: false
+  when: (wedgetail_agent_enrol_force | bool) or not wedgetail_agent__enrolment.stat.exists
+
+# enrol never prints the token, so its error is safe to show.
+- name: Report a failed enrolment
+  ansible.builtin.fail:
+    msg: "wedgetail-agent enrol failed (exit {{ wedgetail_agent__enrol.rc }}): {{ wedgetail_agent__enrol.stderr | default('') }}"
+  when:
+    - wedgetail_agent__enrol is not skipped
+    - wedgetail_agent__enrol.rc | default(0) != 0

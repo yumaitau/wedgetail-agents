@@ -41,6 +41,11 @@ sudo wedgetail-agent enrol
 Get-Content token.txt | & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" enrol
 ```
 
+For fleets, the Ansible role ([ansible/roles/wedgetail_agent](../ansible/roles/wedgetail_agent/README.md))
+and the MSI's `ENROLTOKEN` property ([packaging/windows/README.md](../packaging/windows/README.md))
+run the same command and give it the token on standard input; both skip a host that is
+already enrolled.
+
 The token is **never accepted on the command line**: arguments are visible to every user in
 the process list and are kept in shell history. `--token`, `--token=...` and any argument
 that looks like a token or credential are refused with an error that does not repeat it.

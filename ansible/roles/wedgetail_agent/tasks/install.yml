@@ -1,0 +1,112 @@
+---
+- name: Work out the package file
+  ansible.builtin.set_fact:
+    wedgetail_agent__format: "{{ 'deb' if ansible_facts['os_family'] == 'Debian' else 'rpm' }}"
+    wedgetail_agent__package: >-
+      {{ wedgetail_agent_package_src | basename if wedgetail_agent_package_src | length > 0
+         else wedgetail_agent__deb_name if ansible_facts['os_family'] == 'Debian'
+         else wedgetail_agent__rpm_name }}
+
+- name: Set where the package is kept on the host
+  ansible.builtin.set_fact:
+    wedgetail_agent__package_path: "{{ wedgetail_agent_download_dir }}/{{ wedgetail_agent__package }}"
+
+# The expected SHA-256: given, from a SHA256SUMS file on the controller, or from the release.
+- name: Read SHA256SUMS on the controller
+  ansible.builtin.set_fact:
+    wedgetail_agent__sums: >-
+      {{ lookup('ansible.builtin.file',
+                wedgetail_agent_sha256sums_src
+                if wedgetail_agent_sha256sums_src | length > 0
+                else (wedgetail_agent_package_src | dirname) ~ '/SHA256SUMS') }}
+  when:
+    - wedgetail_agent_sha256 | length == 0
+    - wedgetail_agent_package_src | length > 0
+
+- name: Download SHA256SUMS from the release
+  ansible.builtin.uri:
+    url: "{{ wedgetail_agent_release_url }}/SHA256SUMS"
+    return_content: true
+  register: wedgetail_agent__sums_download
+  check_mode: false
+  when:
+    - wedgetail_agent_sha256 | length == 0
+    - wedgetail_agent_package_src | length == 0
+
+- name: Find the package in SHA256SUMS
+  ansible.builtin.set_fact:
+    wedgetail_agent__sha256: >-
+      {%- if wedgetail_agent_sha256 | length > 0 -%}
+      {{ wedgetail_agent_sha256 | lower }}
+      {%- else -%}
+      {%- set sums = wedgetail_agent__sums if wedgetail_agent_package_src | length > 0 else wedgetail_agent__sums_download.content -%}
+      {%- set pattern = '(?m)^([0-9a-fA-F]{64}) [ *]' ~ (wedgetail_agent__package | regex_escape) ~ '\r?$' -%}
+      {{ ((sums | regex_search(pattern, '\1')) or ['']) | first | lower }}
+      {%- endif -%}
+
+- name: Check a SHA-256 was found for the package
+  ansible.builtin.assert:
+    that: wedgetail_agent__sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: "No SHA-256 for {{ wedgetail_agent__package }} in SHA256SUMS: not installing it."
+    quiet: true
+
+- name: Create the download directory
+  ansible.builtin.file:
+    path: "{{ wedgetail_agent_download_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Download the package
+  ansible.builtin.get_url:
+    url: "{{ wedgetail_agent_release_url }}/{{ wedgetail_agent__package }}"
+    dest: "{{ wedgetail_agent__package_path }}"
+    checksum: "sha256:{{ wedgetail_agent__sha256 }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: wedgetail_agent_package_src | length == 0
+
+- name: Copy the package from the controller
+  ansible.builtin.copy:
+    src: "{{ wedgetail_agent_package_src }}"
+    dest: "{{ wedgetail_agent__package_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: wedgetail_agent_package_src | length > 0
+
+- name: Checksum the package on the host
+  ansible.builtin.stat:
+    path: "{{ wedgetail_agent__package_path }}"
+    checksum_algorithm: sha256
+  register: wedgetail_agent__package_stat
+
+- name: Verify the package against SHA256SUMS
+  ansible.builtin.assert:
+    that:
+      - wedgetail_agent__package_stat.stat.exists
+      - wedgetail_agent__package_stat.stat.checksum == wedgetail_agent__sha256
+    fail_msg: >-
+      {{ wedgetail_agent__package_path }} does not match its SHA-256 from SHA256SUMS
+      ({{ wedgetail_agent__sha256 }}): not installing it.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Verify the Sigstore signature
+  ansible.builtin.include_tasks: cosign.yml
+  when: wedgetail_agent_cosign_verify != 'never'
+
+- name: Install the .deb
+  ansible.builtin.apt:
+    deb: "{{ wedgetail_agent__package_path }}"
+  when: wedgetail_agent__format == 'deb'
+
+- name: Install the .rpm
+  ansible.builtin.dnf:
+    name: "{{ wedgetail_agent__package_path }}"
+    state: present
+    # The rpm is not GPG-signed: it was verified with SHA256SUMS (and cosign) above.
+    disable_gpg_check: true
+  when: wedgetail_agent__format == 'rpm'

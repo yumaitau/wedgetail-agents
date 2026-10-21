@@ -2,3 +2,4 @@
 /dist
 *.msi
 *.pkg
+.ansible/

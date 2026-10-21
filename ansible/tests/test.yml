@@ -1,0 +1,25 @@
+---
+# CI: the role against the runner itself (.github/scripts/ansible-e2e.sh). Package source,
+# endpoint and state come from extra vars; the token from the environment, as a vault lookup
+# would supply it.
+- name: Wedgetail agent role
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    wedgetail_agent_enrol_token: "{{ lookup('ansible.builtin.env', 'WEDGETAIL_ENROL_TOKEN') }}"
+    wedgetail_agent_cosign_verify: never
+    wedgetail_agent_presets: [linux-core]
+    wedgetail_agent_disable_rules: [linux-core.kernel]
+    wedgetail_agent_rules:
+      - id: ci-journal
+        type: journald
+        units: [ssh.service]
+        tags: {env: ci}
+    wedgetail_agent_rules_d:
+      ci-errors:
+        - id: ci-journal-errors
+          type: journald
+          priority_max: 3
+  roles:
+    - role: wedgetail_agent

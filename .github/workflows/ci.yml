@@ -161,6 +161,33 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  ansible:
+    name: ansible (role, ubuntu 24.04)
+    needs: linux-packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-x86_64-unknown-linux-musl
+          path: dist
+      - name: Ansible and ansible-lint
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible"
+          "$RUNNER_TEMP/ansible/bin/pip" install --quiet ansible-core==2.21.5 ansible-lint==26.10.1
+          echo "$RUNNER_TEMP/ansible/bin" >> "$GITHUB_PATH"
+      - name: ansible-lint (production profile)
+        working-directory: ansible
+        run: ansible-lint
+      # Install from a local "release", enrol against the mock ingest, idempotency, purge.
+      - name: Role end to end (this runner, systemd)
+        run: .github/scripts/ansible-e2e.sh dist
+      - name: Agent journal
+        if: always()
+        run: sudo journalctl -u wedgetail-agent --no-pager -n 100 || true
+
   windows-msi:
     name: windows (msi, ${{ matrix.runner }})
     strategy:
@@ -187,6 +214,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           wix build packaging/windows/wedgetail-agent.wxs -arch x64 `
             -d Version=0.1.0 -d BinPath=target/release/wedgetail-agent.exe `
+            -d CaPath=target/release/wedgetail_msi.dll `
             -d ConfigPath=packaging/common/agent.toml -o dist/wedgetail-agent-x86_64.msi
       - name: Install, start and reload the service
         shell: pwsh
@@ -196,6 +224,10 @@ jobs:
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 50; throw "install failed: $($p.ExitCode)" }
           sc.exe qc WedgetailAgent
           icacls "$env:ProgramData\Wedgetail\state"
+          icacls "$env:ProgramData\Wedgetail\agent.toml"
+          # Without ENDPOINT the service is not started; ADD_EVENT_LOG_READERS defaults to 1.
+          if ((Get-Service WedgetailAgent).Status -ne 'Stopped') { throw 'a plain install started the service' }
+          if (-not (Get-LocalGroupMember -SID 'S-1-5-32-573' | Where-Object { $_.SID.Value -eq 'S-1-5-19' })) { throw 'LOCAL SERVICE is not in Event Log Readers' }
           $config = "endpoint = `"https://ingest.example.invalid`"`n[[rule]]`nid = `"app`"`ntype = `"wineventlog`"`nchannel = `"Application`"`n"
           Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value $config -Encoding utf8NoBOM
           & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" check-config
@@ -227,6 +259,10 @@ jobs:
       - name: Presets end to end (mock ingest)
         shell: pwsh
         run: .github/scripts/windows-e2e.ps1
+      # ENDPOINT, PRESETS and ENROLTOKEN (reinstalls from a clean state).
+      - name: MSI properties end to end (mock ingest)
+        shell: pwsh
+        run: .github/scripts/windows-msi-properties.ps1 dist/wedgetail-agent-x86_64.msi
       - name: Agent log
         if: always()
         shell: pwsh
