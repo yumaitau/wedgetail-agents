@@ -111,12 +111,15 @@ $env:WEDGETAIL_ENROL_TOKEN = 'wge_0123456789az_' + ('A' * 43)
 $enrolled = $LASTEXITCODE
 Remove-Item Env:\WEDGETAIL_ENROL_TOKEN
 if ($enrolled -ne 0) { Get-Content "$work\mock.log"; throw 'enrol failed' }
+# Start from Process Creation auditing and 4688 command lines off, so status must report them.
+auditpol /set /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /success:disable /failure:disable | Out-Null
+reg delete 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit' /v ProcessCreationIncludeCmdLine_Enabled /f 2>$null | Out-Null
 # The first event source registration writes a few events; do it before the agent starts.
 AppEvent "wt-e2e-$run zero"
 Start-Service WedgetailAgent
 Start-Sleep -Seconds 10
 
-Section 'Collectors and status (default audit policy)'
+Section 'Collectors and status'
 $status = Status
 $status.collectors | Format-Table rule_id, state, errors, last_error -AutoSize | Out-String -Width 300 | Write-Host
 $status.presets

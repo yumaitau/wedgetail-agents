@@ -38,6 +38,10 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
+      # Prints what the Event Log service accepts on this build (preset queries, long id lists).
+      - name: Windows Event Log evidence
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p agent-collectors --lib os::windows -- --nocapture --test-threads 1
       # Also part of `cargo test`; a named step so a stale schema is obvious in the checks.
       - name: JSON Schema is current (schema/rules.v1.json)
         run: cargo test --locked -p agent-config json_schema_is_current

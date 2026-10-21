@@ -473,13 +473,20 @@ fn format_status(s: &Value) -> String {
         format!("last error:  {}", text(&s["ship"]["last_error"])),
         "collectors:".to_owned(),
     ];
-    for c in s["collectors"].as_array().into_iter().flatten() {
+    let collectors = s["collectors"].as_array().cloned().unwrap_or_default();
+    let width = collectors
+        .iter()
+        .map(|c| text(&c["rule_id"]).len())
+        .max()
+        .unwrap_or(0)
+        .max(24);
+    for c in &collectors {
         let err = c
             .get("last_error")
             .map(|e| format!(" last error: {}", text(e)))
             .unwrap_or_default();
         lines.push(format!(
-            "  {:<24} {:<8} errors {}{err}",
+            "  {:<width$} {:<8} errors {}{err}",
             text(&c["rule_id"]),
             text(&c["state"]),
             text(&c["errors"])

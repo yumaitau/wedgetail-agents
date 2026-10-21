@@ -505,57 +505,61 @@ mod tests {
         assert_eq!(guids.len(), RECOMMENDED.len());
     }
 
+    /// Real `auditpol /get /category:* /r` output from a GitHub Windows Server 2022 runner
+    /// (the 2025 runner prints the same settings; machine name replaced).
     #[test]
-    fn default_policy_reports_what_is_off() {
-        let rows = parse_auditpol(&fixture("default.csv")).expect("parses");
-        assert_eq!(rows.len(), 59);
+    fn runner_policy_reports_what_is_off() {
+        let csv = fixture("github-runner-server-2022.csv");
+        let rows = parse_auditpol(&csv).expect("parses");
+        assert_eq!(rows.len(), 60);
         let logon = &rows["{0CCE9215-69AE-11D9-BED3-505054503030}"];
         assert_eq!(logon.name, "Logon");
         assert_eq!(logon.setting, Some(SF));
 
-        let w = report(
-            Ok(&fixture("default.csv")),
-            Some(false),
-            &[],
-            &presets(&["windows-security"]),
-        );
+        let w = report(Ok(&csv), Some(false), &[], &presets(&["windows-security"]));
         assert_eq!(w["audit_policy"]["checked"], true);
         assert_eq!(
             off_names(&w),
-            [
-                "Credential Validation",
-                "Account Lockout",
-                "Other Logon/Logoff Events",
-                "Process Creation",
-                "Process Termination",
-                "User Account Management",
-                "Audit Policy Change",
-                "MPSSVC Rule-Level Policy Change",
-                "Security System Extension",
-                "Other Object Access Events"
-            ]
+            ["Process Termination", "Audit Policy Change"]
         );
-        let process = &w["audit_policy"]["off"][3];
-        assert_eq!(process["setting"], "No Auditing");
-        assert_eq!(process["recommended"], "Success");
-        assert_eq!(process["events"], "4688");
+        let audit = &w["audit_policy"]["off"][1];
+        assert_eq!(audit["setting"], "Success");
+        assert_eq!(audit["recommended"], "Success and Failure");
+        assert_eq!(audit["events"], "4719, 4904, 4905");
         let text = format_report(&w);
         assert!(
-            text.contains("10 recommended subcategories are off"),
+            text.contains("2 recommended subcategories are off"),
             "{text}"
         );
-        assert!(text.contains("Process Creation"), "{text}");
+        assert!(text.contains("Process Termination"), "{text}");
         assert!(text.contains("do not include the command line"), "{text}");
 
         // Opt-in presets add their subcategories.
         let w = report(
-            Ok(&fixture("default.csv")),
+            Ok(&csv),
             Some(true),
             &[],
             &presets(&["windows-security", "windows-security-dc"]),
         );
-        assert!(off_names(&w).contains(&"Directory Service Changes".to_owned()));
+        assert_eq!(
+            off_names(&w),
+            [
+                "Process Termination",
+                "Audit Policy Change",
+                "Kerberos Authentication Service",
+                "Kerberos Service Ticket Operations",
+                "Directory Service Access",
+                "Directory Service Changes"
+            ]
+        );
         assert!(format_report(&w).contains("4688 command line: included"));
+        // Process Creation off.
+        let off = csv.replace(
+            "Process Creation,{0CCE922B-69AE-11D9-BED3-505054503030},Success",
+            "Process Creation,{0CCE922B-69AE-11D9-BED3-505054503030},No Auditing",
+        );
+        let w = report(Ok(&off), None, &[], &presets(&["windows-security"]));
+        assert!(off_names(&w).contains(&"Process Creation".to_owned()));
     }
 
     #[test]
