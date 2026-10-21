@@ -19,6 +19,8 @@
            UpgradeCode="666D62E6-018F-44E8-91B0-D759D654810D" Scope="perMachine" Compressed="yes">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Wedgetail Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPCONTACT" Value="Yuma IT &lt;wedgetail@yumait.au&gt;" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/yumaitau/wedgetail-agents" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Wedgetail Agent">

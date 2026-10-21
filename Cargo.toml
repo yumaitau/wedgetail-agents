@@ -9,7 +9,7 @@ rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/yumaitau/wedgetail-agents"
 homepage = "https://github.com/yumaitau/wedgetail-agents"
-authors = ["Yuma IT <justin@yumait.com.au>"]
+authors = ["Yuma IT <wedgetail@yumait.au>"]
 publish = false
 
 [workspace.dependencies]

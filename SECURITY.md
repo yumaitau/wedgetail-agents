@@ -4,7 +4,8 @@
 
 Please report vulnerabilities privately through GitHub's
 [private vulnerability reporting](https://github.com/yumaitau/wedgetail-agents/security/advisories/new)
-for this repository. Do not open a public issue.
+for this repository, or email [security@yumait.au](mailto:security@yumait.au). Do not open a
+public issue.
 
 Include the affected version, platform, and steps to reproduce. We aim to acknowledge reports
 within three business days and to agree a disclosure date with you once a fix is ready.

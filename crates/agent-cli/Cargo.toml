@@ -32,7 +32,7 @@ workspace = true
 # is mapped to the target-specific directory.
 [package.metadata.deb]
 name = "wedgetail-agent"
-maintainer = "Yuma IT <justin@yumait.com.au>"
+maintainer = "Yuma IT <wedgetail@yumait.au>"
 copyright = "2026, Yuma IT"
 license-file = ["../../LICENSE", "0"]
 extended-description = """\
