@@ -131,7 +131,26 @@ pub static BUILTIN: &[Preset] = &[
         auto: Auto::Default,
         toml: include_str!("../../../presets/windows/windows-app-control.toml"),
     },
+    // macOS (docs/presets/macos.md).
+    Preset {
+        id: "macos-core",
+        os: "macos",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/macos/macos-core.toml"),
+    },
+    Preset {
+        id: "macos-audit",
+        os: "macos",
+        auto: Auto::Detect(macos_audit_trail),
+        toml: include_str!("../../../presets/macos/macos-audit.toml"),
+    },
 ];
+
+/// `macos-audit`: auditd has an active trail. `/var/audit` is readable by root only, so this
+/// is false for other users (`check-config` without `sudo`).
+fn macos_audit_trail() -> bool {
+    std::path::Path::new("/var/audit/current").exists()
+}
 
 /// A built-in preset rule that only runs when `check` passes on the host, for sources that
 /// differ between distributions: `linux-core.auth` reads `/var/log/auth.log` or
@@ -447,6 +466,24 @@ pub(crate) mod tests {
         let kernel = ["linux-core.kernel", "linux-core.kernel.messages"];
         assert_eq!(kernel.iter().filter(|id| rule_check_passes(id)).count(), 1);
         assert!(rule_check_passes("no-such-rule"));
+    }
+
+    #[test]
+    fn macos_auto_selection() {
+        let auto = [AUTO.to_owned()];
+        let got: Vec<&str> = select(&auto, BUILTIN, "macos")
+            .presets
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(got.first(), Some(&"macos-core"));
+        assert_eq!(
+            got.contains(&"macos-audit"),
+            std::path::Path::new("/var/audit/current").exists()
+        );
+        let audit = [AUTO.to_owned(), "macos-audit".to_owned()];
+        let got = select(&audit, BUILTIN, "macos");
+        assert!(got.presets.iter().any(|p| p.id == "macos-audit"));
     }
 
     /// Every built-in preset parses, validates and namespaces its rule ids.

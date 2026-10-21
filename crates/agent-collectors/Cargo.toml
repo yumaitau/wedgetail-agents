@@ -1,6 +1,6 @@
 [package]
 name = "agent-collectors"
-description = "Wedgetail agent collectors: file tail, journald, Windows Event Log, macOS unified log"
+description = "Wedgetail agent collectors: file tail, journald, Windows Event Log, macOS unified log and audit trail"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

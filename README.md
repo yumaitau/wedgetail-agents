@@ -67,7 +67,9 @@ each OS, rotation and revocation.
 
 **[docs/rules.md](docs/rules.md)** documents every setting and rule field with examples:
 paths and globs, multiline, parsers, include/exclude matching, redaction, sampling, rate
-limits, presets, and which files a rule may read. A JSON Schema for editors is in
+limits, presets, and which files a rule may read. The macOS presets, their fields, Full
+Disk Access/MDM set-up and CPU measurements are in
+[docs/presets/macos.md](docs/presets/macos.md). A JSON Schema for editors is in
 [`schema/rules.v1.json`](schema/rules.v1.json). For example:
 
 ```toml
@@ -79,7 +81,7 @@ presets = ["auto"]
 
 [[rule]]
 id = "nginx-access"
-type = "file"            # file | journald | wineventlog | macos_unified
+type = "file"            # file | journald | wineventlog | macos_unified | macos_bsm
 paths = ["/var/log/nginx/*.log"]
 exclude = ["*.gz"]
 parser = "nginx_combined"

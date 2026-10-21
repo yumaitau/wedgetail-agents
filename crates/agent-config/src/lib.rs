@@ -168,10 +168,18 @@ pub enum RuleKind {
     Wineventlog,
     /// Stream the macOS unified log (macOS).
     MacosUnified,
+    /// Read the OpenBSM audit trail in `/var/audit` (macOS).
+    MacosBsm,
 }
 
 impl RuleKind {
-    pub const NAMES: &[&str] = &["file", "journald", "wineventlog", "macos_unified"];
+    pub const NAMES: &[&str] = &[
+        "file",
+        "journald",
+        "wineventlog",
+        "macos_unified",
+        "macos_bsm",
+    ];
 
     /// The `source_type` used on the wire when a rule does not set one.
     pub fn default_source_type(self) -> &'static str {
@@ -180,6 +188,7 @@ impl RuleKind {
             Self::Journald => "journald",
             Self::Wineventlog => "windows.eventlog",
             Self::MacosUnified => "macos.unified",
+            Self::MacosBsm => "macos.bsm",
         }
     }
 
@@ -189,6 +198,7 @@ impl RuleKind {
             Self::Journald => "journald",
             Self::Wineventlog => "wineventlog",
             Self::MacosUnified => "macos_unified",
+            Self::MacosBsm => "macos_bsm",
         }
     }
 }
@@ -203,6 +213,7 @@ impl<'de> Deserialize<'de> for RuleKind {
             "journald" => Ok(Self::Journald),
             "wineventlog" => Ok(Self::Wineventlog),
             "macos_unified" => Ok(Self::MacosUnified),
+            "macos_bsm" => Ok(Self::MacosBsm),
             "command" => Err(D::Error::custom(
                 "type \"command\" (running scripts) is not supported: the agent never runs \
                  commands",
@@ -413,7 +424,7 @@ pub struct Rule {
     /// Unique id, `[a-z0-9][a-z0-9._-]{0,63}`. Sent as `rule_id`; used by `disable_rules`.
     #[schemars(regex(pattern = r"^[a-z0-9][a-z0-9._-]{0,63}$"))]
     pub id: String,
-    /// `file`, `journald`, `wineventlog` or `macos_unified`.
+    /// `file`, `journald`, `wineventlog`, `macos_unified` or `macos_bsm`.
     #[serde(rename = "type")]
     pub kind: RuleKind,
     /// Set to `false` to keep a rule without running it.
@@ -501,6 +512,11 @@ pub struct Rule {
     /// `macos_unified`: `default`, `info` (default) or `debug`.
     #[serde(default)]
     pub level: Option<LogLevel>,
+
+    /// `macos_bsm`: audit classes to keep (`lo`, `aa`, `ad`, `ex`, ...); empty keeps every
+    /// event in the trail.
+    #[serde(default)]
+    pub classes: Vec<String>,
 
     /// Where the rule was defined. Set by the loader.
     #[serde(skip)]

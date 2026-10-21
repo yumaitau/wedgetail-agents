@@ -1,0 +1,4 @@
+Oct 21 19:30:00 mac-01 syslogd[582]: ASL Sender Statistics
+Oct 21 19:30:12 mac-01 sudo[4721]: alice : TTY=ttys001 ; PWD=/Users/alice ; USER=root ; COMMAND=/usr/bin/true
+Oct 21 19:31:40 mac-01 com.apple.xpc.launchd[1] (com.example.agent[4800]): Service exited with abnormal code: 78
+--- last message repeated 1 time ---

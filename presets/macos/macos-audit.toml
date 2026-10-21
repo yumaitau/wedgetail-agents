@@ -1,0 +1,11 @@
+# macos-audit: the OpenBSM audit trail, selected by "auto" when auditd has an active trail
+# (/var/audit/current). Apple deprecated auditd in macOS 11 and newer releases may not run it.
+# What lands in the trail is set by the `flags` in /etc/security/audit_control; this rule keeps
+# login and logout (lo), authentication and authorisation (aa), administrative (ad) and exec
+# (ex) events from it. Field reference: docs/presets/macos.md.
+schema_version = 1
+
+[[rule]]
+id = "macos-audit.trail"
+type = "macos_bsm"
+classes = ["lo", "aa", "ad", "ex"]

@@ -427,6 +427,14 @@
           ],
           "default": null
         },
+        "classes": {
+          "description": "`macos_bsm`: audit classes to keep (`lo`, `aa`, `ad`, `ex`, ...); empty keeps every\nevent in the trail.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "enabled": {
           "description": "Set to `false` to keep a rule without running it.",
           "type": "boolean",
@@ -607,7 +615,7 @@
           "default": {}
         },
         "type": {
-          "description": "`file`, `journald`, `wineventlog` or `macos_unified`.",
+          "description": "`file`, `journald`, `wineventlog`, `macos_unified` or `macos_bsm`.",
           "$ref": "#/$defs/RuleKind"
         },
         "units": {
@@ -655,6 +663,11 @@
           "description": "Stream the macOS unified log (macOS).",
           "type": "string",
           "const": "macos_unified"
+        },
+        {
+          "description": "Read the OpenBSM audit trail in `/var/audit` (macOS).",
+          "type": "string",
+          "const": "macos_bsm"
         }
       ]
     },

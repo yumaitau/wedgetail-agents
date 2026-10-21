@@ -92,11 +92,13 @@ pub(crate) fn rule(rule: &Rule, protected: &[PathBuf]) -> Vec<String> {
         ("predicate", rule.predicate.is_some()),
         ("level", rule.level.is_some()),
     ];
+    let bsm_only = [("classes", !rule.classes.is_empty())];
     for (kind, fields) in [
         (RuleKind::File, &file_only[..]),
         (RuleKind::Journald, &journald_only[..]),
         (RuleKind::Wineventlog, &wineventlog_only[..]),
         (RuleKind::MacosUnified, &macos_only[..]),
+        (RuleKind::MacosBsm, &bsm_only[..]),
     ] {
         if kind == rule.kind {
             continue;
@@ -123,6 +125,22 @@ pub(crate) fn rule(rule: &Rule, protected: &[PathBuf]) -> Vec<String> {
                 .is_some_and(|p| p.is_empty() || p.len() > 4096 || p.contains('\0'))
             {
                 err("predicate must be 1-4096 characters".into());
+            }
+        }
+        RuleKind::MacosBsm => {
+            if rule.classes.len() > 32 {
+                err("classes: at most 32".into());
+            }
+            for class in &rule.classes {
+                let valid = (1..=16).contains(&class.len())
+                    && class
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+                if !valid {
+                    err(format!(
+                        "classes: {class:?} is not an audit class name (lo, aa, ad, ex, ...)"
+                    ));
+                }
             }
         }
     }

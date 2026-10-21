@@ -277,6 +277,7 @@ jobs:
           sudo installer -pkg dist/wedgetail-agent-universal.pkg -target /
           lipo -archs /usr/local/bin/wedgetail-agent
           plutil -lint /Library/LaunchDaemons/au.com.yumait.wedgetail-agent.plist
+          plutil -lint packaging/macos/wedgetail-agent-pppc.mobileconfig
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
           sudo wedgetail-agent check-config
