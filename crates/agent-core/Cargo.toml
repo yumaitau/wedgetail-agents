@@ -25,5 +25,8 @@ ureq.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-registry.workspace = true
 
+[dev-dependencies]
+rcgen.workspace = true
+
 [lints]
 workspace = true

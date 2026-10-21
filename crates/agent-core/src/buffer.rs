@@ -506,7 +506,7 @@ pub fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
 
 /// Make a rename or create in `dir` durable. Windows has no directory fsync; NTFS journals the
 /// metadata change.
-fn sync_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     File::open(dir)?.sync_all()?;
     #[cfg(not(unix))]

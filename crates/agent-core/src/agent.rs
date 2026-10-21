@@ -22,7 +22,8 @@ use crate::backoff::Backoff;
 use crate::batch::BatchLimits;
 use crate::buffer::{DiskBuffer, write_atomic};
 use crate::checkpoints::CheckpointStore;
-use crate::credential::CredentialProvider;
+use crate::credential::{CredentialProvider, CredentialStore};
+use crate::enrolment::{RotationOptions, Rotator};
 use crate::host::HostInfo;
 use crate::processor::{PassThrough, Processor, Verdict};
 use crate::shipper::{Shipper, ShipperOptions};
@@ -62,6 +63,7 @@ pub struct Agent {
     host: HostInfo,
     presets: Vec<String>,
     shipper_options: ShipperOptions,
+    rotation: Option<(Arc<dyn CredentialStore>, RotationOptions)>,
 }
 
 impl fmt::Debug for Agent {
@@ -95,7 +97,19 @@ impl Agent {
             host: HostInfo::detect(),
             presets: Vec::new(),
             shipper_options,
+            rotation: None,
         })
+    }
+
+    /// Rotate the host credential in `store` in the background when it is due (see
+    /// [`Rotator`]). `store` should be the same store the agent reads its credential from.
+    pub fn with_rotation(
+        mut self,
+        store: Arc<dyn CredentialStore>,
+        options: RotationOptions,
+    ) -> Self {
+        self.rotation = Some((store, options));
+        self
     }
 
     /// Install the redaction/filter hook that runs before events reach the disk buffer.
@@ -133,6 +147,7 @@ impl Agent {
             host,
             presets,
             shipper_options,
+            rotation,
         } = self;
         let started = Instant::now();
         let state_dir = config.state_dir.clone();
@@ -150,6 +165,13 @@ impl Agent {
             CheckpointStore::open(&state_dir).map_err(|e| io_err("cannot open checkpoints", e))?;
         let metrics = Arc::new(Metrics::default());
 
+        let rotator = match rotation {
+            Some((store, options)) => Some(
+                Rotator::new(&shipper_options.endpoint, store, &state_dir, options)
+                    .map_err(AgentError)?,
+            ),
+            None => None,
+        };
         let shipper =
             Shipper::new(shipper_options, credential, Arc::clone(&metrics)).map_err(AgentError)?;
         let shipper_thread = {
@@ -159,6 +181,18 @@ impl Agent {
                 .name("shipper".into())
                 .spawn(move || shipper.run(buffer, stop))
                 .map_err(|e| AgentError(format!("cannot start the shipper: {e}")))?
+        };
+        let rotation_thread = match rotator {
+            Some(rotator) => {
+                let stop = stop.clone();
+                Some(
+                    thread::Builder::new()
+                        .name("rotation".into())
+                        .spawn(move || rotator.run(stop))
+                        .map_err(|e| AgentError(format!("cannot start rotation: {e}")))?,
+                )
+            }
+            None => None,
         };
 
         let (tx, rx) = mpsc::sync_channel::<Message>(QUEUE_BATCHES);
@@ -245,6 +279,9 @@ impl Agent {
             let _ = handle.join();
         }
         let _ = shipper_thread.join();
+        if let Some(handle) = rotation_thread {
+            let _ = handle.join();
+        }
         let fields = snapshot(&buffer, &metrics, &host, started, &presets);
         write_status(&state_dir, &telemetry::status_json(&fields, &metrics));
         log::info!("agent stopped");

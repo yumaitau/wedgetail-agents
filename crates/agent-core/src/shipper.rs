@@ -111,6 +111,29 @@ pub fn classify(status: u16, retry_after: Option<&str>, body: &str) -> Outcome {
     }
 }
 
+/// The HTTP client for every agent request: rustls (TLS 1.2 and 1.3 only, the ring provider)
+/// with the OS certificate verifier, which is always on; no redirects; `https://` only. Plain
+/// HTTP exists only for the in-process test server, so release builds cannot use it.
+pub(crate) fn http_agent(endpoint: &str) -> Result<ureq::Agent, String> {
+    let allow_http = cfg!(test);
+    check_scheme(endpoint, allow_http)?;
+    let tls = TlsConfig::builder()
+        .provider(TlsProvider::Rustls)
+        .root_certs(RootCerts::PlatformVerifier)
+        .unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .build();
+    Ok(ureq::Agent::config_builder()
+        .https_only(!allow_http)
+        .tls_config(tls)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_global(Some(Duration::from_secs(120)))
+        .user_agent(format!("wedgetail-agent/{AGENT_VERSION}"))
+        .build()
+        .new_agent())
+}
+
 /// Refuse anything but `https://` unless `allow_http` (tests only).
 pub fn check_scheme(endpoint: &str, allow_http: bool) -> Result<(), String> {
     if endpoint.starts_with("https://") || (allow_http && endpoint.starts_with("http://")) {
@@ -139,24 +162,7 @@ impl Shipper {
         credential: Arc<dyn CredentialProvider>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
-        // Plain HTTP exists only for the in-process test server; release builds cannot use it.
-        let allow_http = cfg!(test);
-        check_scheme(&opts.endpoint, allow_http)?;
-        let tls = TlsConfig::builder()
-            .provider(TlsProvider::Rustls)
-            .root_certs(RootCerts::PlatformVerifier)
-            .unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .build();
-        let agent = ureq::Agent::config_builder()
-            .https_only(!allow_http)
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .timeout_global(Some(Duration::from_secs(120)))
-            .user_agent(format!("wedgetail-agent/{AGENT_VERSION}"))
-            .build()
-            .new_agent();
+        let agent = http_agent(&opts.endpoint)?;
         Ok(Self {
             url: format!("{}{EVENTS_PATH}", opts.endpoint),
             rate: RateLimiter::new(opts.max_requests_per_minute),
@@ -400,17 +406,36 @@ pub(crate) mod test_server {
         pub at: Instant,
         pub path: String,
         pub headers: HashMap<String, String>,
+        /// The body, gunzipped if it was sent with `Content-Encoding: gzip`.
+        pub body: String,
         pub lines: Vec<String>,
+    }
+
+    impl Request {
+        pub fn bearer(&self) -> &str {
+            self.headers
+                .get("authorization")
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .unwrap_or("")
+        }
     }
 
     /// `(status, extra headers, body)`; `None` closes the connection without answering.
     pub type Reply = Option<(u16, Vec<(String, String)>, String)>;
 
-    #[derive(Debug, Clone)]
+    type Handler = Box<dyn Fn(&Request) -> Reply + Send + Sync>;
+
+    #[derive(Clone)]
     pub struct Server {
         pub url: String,
         pub requests: Arc<Mutex<Vec<Request>>>,
-        script: Arc<Mutex<VecDeque<Reply>>>,
+        handler: Arc<Handler>,
+    }
+
+    impl std::fmt::Debug for Server {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Server").field("url", &self.url).finish()
+        }
     }
 
     pub fn ok_reply(n: usize) -> Reply {
@@ -424,12 +449,24 @@ pub(crate) mod test_server {
     impl Server {
         /// Answers from `script` in order, then 200 for everything.
         pub fn start(script: Vec<Reply>) -> Self {
+            let script = Mutex::new(VecDeque::from(script));
+            Self::with_handler(move |req| {
+                script
+                    .lock()
+                    .expect("lock")
+                    .pop_front()
+                    .unwrap_or_else(|| ok_reply(req.lines.len()))
+            })
+        }
+
+        /// Answers every request with `handler`.
+        pub fn with_handler(handler: impl Fn(&Request) -> Reply + Send + Sync + 'static) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let url = format!("http://{}", listener.local_addr().expect("addr"));
             let server = Self {
                 url,
                 requests: Arc::default(),
-                script: Arc::new(Mutex::new(script.into())),
+                handler: Arc::new(Box::new(handler)),
             };
             let s = server.clone();
             thread::spawn(move || {
@@ -459,28 +496,28 @@ pub(crate) mod test_server {
                     let mut body = vec![0; len];
                     reader.read_exact(&mut body).expect("body");
                     let mut text = String::new();
-                    GzDecoder::new(&body[..])
-                        .read_to_string(&mut text)
-                        .expect("gzip body");
+                    if headers.get("content-encoding").map(String::as_str) == Some("gzip") {
+                        GzDecoder::new(&body[..])
+                            .read_to_string(&mut text)
+                            .expect("gzip body");
+                    } else {
+                        text = String::from_utf8(body).expect("utf-8 body");
+                    }
                     let path = request_line
                         .split_whitespace()
                         .nth(1)
                         .unwrap_or("")
                         .to_owned();
                     let lines: Vec<String> = text.lines().map(str::to_owned).collect();
-                    let n = lines.len();
-                    s.requests.lock().expect("lock").push(Request {
+                    let request = Request {
                         at: Instant::now(),
                         path,
                         headers,
+                        body: text,
                         lines,
-                    });
-                    let reply = s
-                        .script
-                        .lock()
-                        .expect("lock")
-                        .pop_front()
-                        .unwrap_or_else(|| ok_reply(n));
+                    };
+                    let reply = (s.handler)(&request);
+                    s.requests.lock().expect("lock").push(request);
                     let Some((status, extra, body)) = reply else {
                         continue;
                     };
@@ -613,6 +650,32 @@ mod tests {
         assert_eq!(reqs.len(), 4);
         assert!(reqs.iter().all(|r| r.lines == records(0..1)));
         assert_eq!(lock(&buf).pending_records(), 0);
+    }
+
+    #[test]
+    fn revoked_credential_backs_off_and_keeps_the_events() {
+        let server = Server::with_handler(|_| {
+            Some((
+                401,
+                vec![],
+                r#"{"error":"Missing or invalid credential."}"#.into(),
+            ))
+        });
+        let dir = TempDir::new("ship-revoked");
+        let buf = filled(&dir, 0..5);
+        let stop = Stop::new();
+        let worker = {
+            let (buf, stop, url) = (Arc::clone(&buf), stop.clone(), server.url.clone());
+            thread::spawn(move || shipper(&url, 100).ship_once(&buf, &stop).expect("ship"))
+        };
+        thread::sleep(Duration::from_secs(1));
+        stop.stop();
+        assert!(!worker.join().expect("join"));
+        // Backoff (50 ms doubling to 200 ms, with jitter) allows a handful of attempts a
+        // second, not a storm, and the batch is kept for when the host is enrolled again.
+        let attempts = server.requests().len();
+        assert!((2..40).contains(&attempts), "{attempts} attempts");
+        assert_eq!(lock(&buf).pending_records(), 5);
     }
 
     #[test]
@@ -749,6 +812,23 @@ mod tests {
         t.join().expect("join");
         assert!(server.requests().is_empty());
         assert_eq!(lock(&buf).pending_records(), 2);
+    }
+
+    #[test]
+    fn tls_is_1_2_or_1_3_only() {
+        // The client's rustls build offers these versions and nothing older.
+        for v in rustls::ALL_VERSIONS {
+            assert!(
+                matches!(
+                    v.version,
+                    rustls::ProtocolVersion::TLSv1_2 | rustls::ProtocolVersion::TLSv1_3
+                ),
+                "{:?}",
+                v.version
+            );
+        }
+        assert!(http_agent("https://ingest.example.com").is_ok());
+        assert!(http_agent("ftp://ingest.example.com").is_err());
     }
 
     #[test]
