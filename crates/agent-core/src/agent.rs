@@ -34,6 +34,8 @@ const POLL_MAX_EVENTS: usize = 1000;
 const POLL_WAIT: Duration = Duration::from_secs(1);
 /// Batches queued between collectors and the writer.
 const QUEUE_BATCHES: usize = 16;
+/// How often `status.json` is refreshed for `wedgetail-agent status`.
+const STATUS_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct AgentError(pub String);
@@ -183,22 +185,12 @@ impl Agent {
         let max_event_bytes = usize::try_from(config.limits.max_event_bytes).unwrap_or(usize::MAX);
         let interval = Duration::from_secs(config.heartbeat.interval_s);
         let mut next_heartbeat = Instant::now();
+        let mut next_status = Instant::now();
         let mut collectors_done = false;
         loop {
             let now = Instant::now();
             if now >= next_heartbeat {
-                let stats = {
-                    let buf = buffer.lock().unwrap_or_else(PoisonError::into_inner);
-                    metrics
-                        .dropped_buffer_full
-                        .store(buf.dropped_full(), std::sync::atomic::Ordering::Relaxed);
-                    BufferStats {
-                        bytes: buf.bytes(),
-                        events: buf.pending_records(),
-                    }
-                };
-                let fields = telemetry::heartbeat_fields(&host, started, stats, &metrics, &presets);
-                write_status(&state_dir, &telemetry::status_json(&fields, &metrics));
+                let fields = snapshot(&buffer, &metrics, &host, started, &presets);
                 let line = telemetry::heartbeat_event(fields).to_wire_line();
                 if let Err(e) = buffer
                     .lock()
@@ -209,22 +201,19 @@ impl Agent {
                 }
                 next_heartbeat = now + interval;
             }
+            if now >= next_status {
+                let fields = snapshot(&buffer, &metrics, &host, started, &presets);
+                write_status(&state_dir, &telemetry::status_json(&fields, &metrics));
+                next_status = now + STATUS_INTERVAL;
+            }
             if stop.is_stopped() && collectors_done {
                 break;
             }
             if collectors_done {
-                stop.wait(
-                    next_heartbeat
-                        .saturating_duration_since(Instant::now())
-                        .min(Duration::from_secs(1)),
-                );
+                stop.wait(Duration::from_secs(1));
                 continue;
             }
-            match rx.recv_timeout(
-                next_heartbeat
-                    .saturating_duration_since(Instant::now())
-                    .min(Duration::from_secs(1)),
-            ) {
+            match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(Message { collector, batch }) => {
                     let lines =
                         process(batch.events, processor.as_mut(), max_event_bytes, &metrics);
@@ -256,14 +245,7 @@ impl Agent {
             let _ = handle.join();
         }
         let _ = shipper_thread.join();
-        let stats = {
-            let buf = buffer.lock().unwrap_or_else(PoisonError::into_inner);
-            BufferStats {
-                bytes: buf.bytes(),
-                events: buf.pending_records(),
-            }
-        };
-        let fields = telemetry::heartbeat_fields(&host, started, stats, &metrics, &presets);
+        let fields = snapshot(&buffer, &metrics, &host, started, &presets);
         write_status(&state_dir, &telemetry::status_json(&fields, &metrics));
         log::info!("agent stopped");
         Ok(())
@@ -293,6 +275,27 @@ fn process(
         }
     }
     lines
+}
+
+/// Heartbeat fields for the current buffer and counters.
+fn snapshot(
+    buffer: &Mutex<DiskBuffer>,
+    metrics: &Metrics,
+    host: &HostInfo,
+    started: Instant,
+    presets: &[String],
+) -> serde_json::Map<String, serde_json::Value> {
+    let stats = {
+        let buf = buffer.lock().unwrap_or_else(PoisonError::into_inner);
+        metrics
+            .dropped_buffer_full
+            .store(buf.dropped_full(), std::sync::atomic::Ordering::Relaxed);
+        BufferStats {
+            bytes: buf.bytes(),
+            events: buf.pending_records(),
+        }
+    };
+    telemetry::heartbeat_fields(host, started, stats, metrics, presets)
 }
 
 fn write_status(dir: &Path, status: &serde_json::Value) {

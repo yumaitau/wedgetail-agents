@@ -4,7 +4,8 @@
 use std::time::Duration;
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, HANDLE, WAIT_OBJECT_0,
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_OPERATION, ERROR_NO_MORE_ITEMS, HANDLE,
+    WAIT_OBJECT_0,
 };
 use windows::Win32::System::EventLog::{
     EVT_HANDLE, EVT_RENDER_FLAGS, EvtClose, EvtCreateBookmark, EvtNext, EvtRender,
@@ -122,7 +123,14 @@ impl Subscription {
                             unsafe { EvtUpdateBookmark(self.bookmark.0, event.0) }?;
                         }
                     }
-                    Err(e) if e.code() == ERROR_NO_MORE_ITEMS.to_hresult() => break,
+                    // A pull subscription with nothing new reports ERROR_NO_MORE_ITEMS, or
+                    // ERROR_INVALID_OPERATION before its first event.
+                    Err(e)
+                        if e.code() == ERROR_NO_MORE_ITEMS.to_hresult()
+                            || e.code() == ERROR_INVALID_OPERATION.to_hresult() =>
+                    {
+                        break;
+                    }
                     Err(e) => return Err(e),
                 }
             }
