@@ -247,8 +247,13 @@ jobs:
           if-no-files-found: error
 
   macos-pkg:
-    name: macos (pkg, unsigned)
-    runs-on: macos-latest
+    name: macos (pkg, unsigned, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 14 and 15 on Apple silicon, 15 on Intel, and the current release.
+        runner: [macos-14, macos-15, macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -289,14 +294,22 @@ jobs:
           sudo wedgetail-agent status --json | grep -q '"state": "running"'
           # "auto" presets as the root daemon: macos-core always, macos-audit when auditd has
           # a trail. A real event: sudo logs its command line, which macos-core.auth buffers.
-          sudo wedgetail-agent status --json | grep -q '"macos-core.auth"'
+          sw_vers
+          sudo wedgetail-agent status | grep -E 'macos-core.auth +running'
+          audit=false
           if sudo test -e /var/audit/current; then
-            sudo wedgetail-agent status --json | grep -q '"macos-audit.trail"'
+            audit=true
+            sudo cat /etc/security/audit_control || true
+            sudo wedgetail-agent status | grep -E 'macos-audit.trail +running'
           fi
           sudo -k
           sudo /usr/bin/true
           sleep 5
           sudo sh -c 'grep -ac "\"source_type\":\"macos.unified\",\"rule_id\":\"macos-core.auth\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+          # sudo is class aa, which the default audit_control flags (lo,aa) record.
+          if $audit; then
+            sudo sh -c 'grep -ac "\"source_type\":\"macos.bsm\",\"rule_id\":\"macos-audit.trail\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+          fi
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
             | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
@@ -311,6 +324,7 @@ jobs:
           sudo packaging/macos/uninstall.sh --purge
           test ! -e /usr/local/bin/wedgetail-agent
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.runner == 'macos-latest'
         with:
           name: macos-pkg
           path: dist/
