@@ -14,7 +14,7 @@ use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 use crate::backoff::{Backoff, RateLimiter, parse_retry_after};
 use crate::batch::{self, BatchLimits, Oversize};
 use crate::buffer::DiskBuffer;
-use crate::credential::CredentialProvider;
+use crate::credential::{CredentialProvider, Secret};
 use crate::stop::Stop;
 use crate::telemetry::{AGENT_VERSION, Metrics};
 
@@ -196,6 +196,11 @@ impl Shipper {
             self.pending_since = None;
             return Ok(false);
         }
+        // Not enrolled (or the credential is unreadable): keep buffering, and do not fix a
+        // batch yet so the first one sent is as full as the limits allow.
+        if peeked.inflight_id.is_none() && self.current_credential().is_none() {
+            return Ok(false);
+        }
         let since = *self.pending_since.get_or_insert_with(Instant::now);
         let raw: usize = peeked.lines.iter().map(|l| l.len() + 1).sum();
         let full =
@@ -269,6 +274,32 @@ impl Shipper {
         }
     }
 
+    /// The credential, or `None` (logged and reported in status) when there is none yet or it
+    /// cannot be read.
+    fn current_credential(&mut self) -> Option<Secret> {
+        match self.credential.credential() {
+            Ok(Some(s)) => {
+                self.warned_not_enrolled = false;
+                Some(s)
+            }
+            Ok(None) => {
+                if !self.warned_not_enrolled {
+                    log::warn!(
+                        "not enrolled yet: buffering events until a credential is available"
+                    );
+                    self.warned_not_enrolled = true;
+                }
+                self.metrics.ship_error("not enrolled");
+                None
+            }
+            Err(e) => {
+                log::error!("credential: {e}");
+                self.metrics.ship_error(&format!("credential: {e}"));
+                None
+            }
+        }
+    }
+
     /// POST until the outcome is final (never `Retry`). `None` if stopped first.
     fn send_with_retry(&mut self, id: &str, body: &[u8], stop: &Stop) -> Option<Outcome> {
         loop {
@@ -282,32 +313,11 @@ impl Shipper {
                 }
                 continue;
             }
-            let secret = match self.credential.credential() {
-                Ok(Some(s)) => {
-                    self.warned_not_enrolled = false;
-                    s
+            let Some(secret) = self.current_credential() else {
+                if stop.wait(Duration::from_secs(30)) {
+                    return None;
                 }
-                Ok(None) => {
-                    if !self.warned_not_enrolled {
-                        log::warn!(
-                            "not enrolled yet: buffering events until a credential is available"
-                        );
-                        self.warned_not_enrolled = true;
-                    }
-                    self.metrics.ship_error("not enrolled");
-                    if stop.wait(Duration::from_secs(30)) {
-                        return None;
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    log::error!("credential: {e}");
-                    self.metrics.ship_error(&format!("credential: {e}"));
-                    if stop.wait(Duration::from_secs(60)) {
-                        return None;
-                    }
-                    continue;
-                }
+                continue;
             };
             self.rate.record(Instant::now());
             match self.post(id, body, secret.expose()) {
