@@ -866,14 +866,14 @@ mod tests {
             })
         };
 
-        // Due for rotation 1 to 2 s from now, in the middle of the stream.
+        // Not due yet: it is made due once the server has seen a batch sent with A.
         let dir = TempDir::new("rotate-continuous");
         fs::create_dir_all(&dir.0).expect("mkdir");
         let store = Arc::new(FileCredential {
             path: dir.0.join("credential"),
         });
         store.store(&Secret::new(CRED_A.into())).expect("store");
-        EnrolmentInfo::new("h0st00000001", &server.url, 30, now_s() - 30 * DAY_S + 2)
+        EnrolmentInfo::new("h0st00000001", &server.url, 30, now_s())
             .save(&dir.0)
             .expect("save");
         let config = AgentConfig::parse(&format!(
@@ -900,6 +900,18 @@ mod tests {
         };
 
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !server
+            .requests()
+            .iter()
+            .any(|r| r.path == "/v1/agent/events" && r.bearer() == CRED_A)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Now 31 days old: the rotator (checking every 100 ms) rotates mid-stream.
+        EnrolmentInfo::new("h0st00000001", &server.url, 30, now_s() - 31 * DAY_S)
+            .save(&dir.0)
+            .expect("save");
         let received = || -> Vec<String> {
             server
                 .requests()
