@@ -85,8 +85,10 @@ playbook() {
 unchanged() {
     local out
     out=$(playbook "$@" | tee /dev/stderr)
-    grep -Eq 'localhost +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' <<<"$out" \
-        || fail "the run with $* changed something"
+    # Without the colour codes.
+    sed -E 's/\x1b\[[0-9;]*m//g' <<<"$out" \
+        | grep -Eq 'localhost +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' \
+        || fail "the run with ${*:-no extra vars} changed something"
 }
 # Not a real token: the mock accepts any wge_ bearer.
 export WEDGETAIL_ENROL_TOKEN="wge_0123456789az_$(printf 'A%.0s' $(seq 43))"
