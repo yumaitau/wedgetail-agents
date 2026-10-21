@@ -290,6 +290,10 @@ jobs:
           if [ ! -f /etc/security/audit_control ] && [ -f /etc/security/audit_control.example ]; then
             sudo cp /etc/security/audit_control.example /etc/security/audit_control
           fi
+          # The classes macos-audit keeps; ex records every execve.
+          if [ -f /etc/security/audit_control ]; then
+            sudo sed -i '' 's/^flags:.*/flags:lo,aa,ad,ex/' /etc/security/audit_control
+          fi
           # The launchd job ships disabled; enable and load it, then start auditing.
           sudo launchctl enable system/com.apple.auditd || true
           sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist || true
@@ -321,7 +325,7 @@ jobs:
             sudo wedgetail-agent status || true
             sudo ls -l "$buffer" || true
             sudo tail -20 /Library/Logs/Wedgetail/agent.log || true
-            sudo sh -c "grep -aoE '\"eventMessage\":\"[^\"]{0,120}\",\"eventType\":\"[a-zA-Z]+\",\"messageType\":\"[A-Za-z]+\",\"process\":\"[^\"]+\"' \"$buffer\"/*.seg" | sort | uniq -c | sort -rn | head -30 || true
+            sudo sh -c "grep -aoE '\"rule_id\":\"macos-[a-z]+\.[a-z]+\".{0,250}' \"$buffer\"/*.seg" | tail -30 || true
           }
           # macOS 14 writes sudo command lines to the unified log; 15 and later do not.
           if sudo log show --last 2m --style syslog --predicate 'process == "sudo" AND eventMessage CONTAINS "COMMAND=/usr/bin/true"' | grep -q 'COMMAND=/usr/bin/true'; then
@@ -332,12 +336,12 @@ jobs:
           else
             echo "this macOS does not log sudo command lines to the unified log"
           fi
-          # sudo is class aa, which the default audit_control flags (lo,aa) record.
+          # With flags ex, the execve of /usr/bin/true is in the trail.
           if $audit; then
-            if ! sudo sh -c "grep -aqE '\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"' \"$buffer\"/*.seg"; then
+            if ! sudo sh -c "grep -aqF '\"exec_args\":[\"/usr/bin/true\"]' \"$buffer\"/*.seg"; then
               debug; sudo ls -l /var/audit; exit 1
             fi
-            echo "macos-audit.trail buffered AUE_sudo"
+            echo "macos-audit.trail buffered the execve of /usr/bin/true"
           fi
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
