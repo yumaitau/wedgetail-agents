@@ -321,7 +321,7 @@ jobs:
           sudo /usr/bin/true
           sleep 10
           # Read the buffered wire lines back and check for the two events.
-          sudo cat "/Library/Application Support/Wedgetail/state/buffer/"*.seg > buffer.bin
+          sudo sh -c 'cat "/Library/Application Support/Wedgetail/state/buffer/"*.seg' > buffer.bin
           sudo log show --last 3m --style syslog --predicate 'process == "sudo"' > sudo.log || true
           python3 - "$audit" <<'PY'
           import collections, json, re, sys

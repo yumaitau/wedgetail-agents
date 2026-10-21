@@ -471,7 +471,31 @@ Intel Macs and macOS 14/15 have not been measured.
 Events a day on the test Mac (a developer workstation; a managed office Mac is likely
 lower), counted with `log show --last 24h` and the rule's own predicate:
 
-VOLUME_TABLE
+| Rule | Events in 24 h |
+| --- | --- |
+| `macos-core.auth` | 315 |
+| `macos-core.gatekeeper` | 2,799 (roughly one per new or changed executable run; most are `GK evaluateScanResult: 0`, allowed) |
+| `macos-core.tcc` | 0 on the test Mac; GitHub's macOS 26 runner logged a handful of `AUTHREQ_SUBJECT`/`AUTHREQ_RESULT` pairs from Software Update in a few minutes |
+| `macos-core.persistence` | 251 |
+| `macos-core.mdm` | 146 (not enrolled: these are `mdmclient` errors) |
+| `macos-core.firewall` | 35 |
+| `macos-core.install` | about 700 lines a day (62,692 lines over 87 days) |
+| `macos-core.syslog` | a few hundred lines a day, mostly `syslogd` statistics |
+
+`log show` only returns what the log store kept; the live stream can see slightly more.
+In the 5-minute agent runs above the buffer received 2 to 27 events per window, plus one
+heartbeat a minute.
+
+To keep allowed Gatekeeper assessments out and only send blocks and prompts:
+
+```toml
+[[rule]]
+id = "site-gatekeeper-blocks"
+type = "macos_unified"
+level = "default"
+predicate = 'subsystem == "com.apple.syspolicy.exec" AND (eventMessage BEGINSWITH "GK evaluateScanResult" OR eventMessage BEGINSWITH "Prompt shown")'
+exclude_match = ['"eventMessage":"GK evaluateScanResult: 0,']
+```
 
 ## Tuning
 
