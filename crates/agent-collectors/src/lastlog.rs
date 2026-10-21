@@ -84,7 +84,12 @@ impl Lastlog {
         let canonical = match paths::check_file(&self.path, &root, &self.env.protected) {
             Ok(c) => c,
             // Not there (yet): nothing to summarise.
-            Err(_) if !self.path.exists() => return Ok(None),
+            Err(_)
+                if matches!(self.path.symlink_metadata(),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(None);
+            }
             Err(e) => return Err(CollectorError(e)),
         };
         let Some(mtime) = Self::mtime_us(&canonical) else {
@@ -253,6 +258,28 @@ mod tests {
         assert!(c.poll(10, Duration::ZERO).expect("poll").events.is_empty());
         c.min_interval = Duration::ZERO;
         assert_eq!(c.poll(10, Duration::ZERO).expect("poll").events.len(), 1);
+    }
+
+    /// A file the agent cannot reach is an error (shown in the heartbeat), not "absent".
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directory_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Dir(std::env::temp_dir().join(format!("wt-lastlog-x-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(&dir.0);
+        std::fs::create_dir_all(&dir.0).expect("mkdir");
+        std::fs::write(dir.0.join("lastlog"), [0u8; 292]).expect("write");
+        std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        let template = EventTemplate::new("ll", "linux.login", None, &Default::default());
+        let mut c = Lastlog::new(template, dir.0.join("lastlog"), CollectorEnv::default());
+        c.start(None).expect("start");
+        let result = c.poll(10, Duration::ZERO);
+        // Root reads the directory anyway; then there is nothing to test.
+        let privileged = std::fs::read_dir(&dir.0).is_ok();
+        std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        if !privileged {
+            assert!(result.is_err(), "{result:?}");
+        }
     }
 
     #[test]

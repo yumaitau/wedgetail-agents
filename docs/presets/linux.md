@@ -42,11 +42,15 @@ distribution's file, `<id>.journald` the systemd journal, and `<id>.messages` bu
 `/var/log/messages` (Alpine). When the configuration is loaded (at start and on every reload)
 the agent reads `/etc/os-release` (`ID`, `ID_LIKE`) and checks which files exist, and
 switches on exactly one variant per source, so a message is never sent twice. The others are
-listed as disabled by `check-config`.
+listed as disabled by `check-config`. A file counts only when the agent's account can open
+it, so the service falls back to the journal for a file it may not read. `sudo
+wedgetail-agent check-config` runs as root and can therefore show the file variant where the
+service uses the journal.
 
 Authentication (`linux-core.sshd`, `linux-core.auth`):
 
-1. The family's own file, when it exists (rsyslog is installed): Debian and Ubuntu
+1. The family's own file, when it exists (rsyslog is installed) and the agent can open it:
+   Debian and Ubuntu
    (`ID`/`ID_LIKE` `debian`, `ubuntu`) `/var/log/auth.log`; RHEL, Fedora, CentOS, Rocky,
    Alma, Oracle and Amazon Linux (`rhel`, `fedora`, `centos`, `rocky`, `almalinux`, `ol`,
    `amzn`) `/var/log/secure`; others either.
@@ -62,7 +66,8 @@ Authentication (`linux-core.sshd`, `linux-core.auth`):
 | Ubuntu minimal / cloud images without rsyslog | journal | journal | journal |
 | Debian 12 (no rsyslog by default) | journal | journal | journal |
 | Debian 12 with rsyslog | `/var/log/auth.log` | journal | journal |
-| RHEL 9 (rsyslog) | `/var/log/secure` | journal | `/var/log/cron` |
+| RHEL 9 (rsyslog), packaged service | journal (`/var/log/secure` is `0600 root`) | journal | journal |
+| RHEL 9 with `CAP_DAC_READ_SEARCH` (or as root) | `/var/log/secure` | journal | `/var/log/cron` |
 | Amazon Linux 2023 (no rsyslog) | journal | journal | journal |
 | Alpine 3.x (busybox syslogd, no journal) | `/var/log/messages` (auth, authpriv) | `/var/log/messages` (kern) | `/var/log/messages` (cron) |
 
@@ -322,7 +327,7 @@ they cannot be opened:
 
 | File | Why | Grant |
 | --- | --- | --- |
-| `/var/log/secure`, `/var/log/cron`, `/var/log/messages` (RHEL family) | `0600 root` | `CAP_DAC_READ_SEARCH` (below), or an rsyslog `$FileGroup adm` / `FileCreateMode` setting of your own |
+| `/var/log/secure`, `/var/log/cron`, `/var/log/messages` (RHEL family) | `0600 root`; without access the agent reads the same messages from the journal | `CAP_DAC_READ_SEARCH` (below), or an rsyslog `$FileGroup adm` / `FileCreateMode` setting of your own |
 | `/var/log/btmp` | `0600 root:utmp` (RHEL) or `0660 root:utmp` (Debian) | `CAP_DAC_READ_SEARCH`. Adding the agent to `utmp` also works on Debian but gives write access to wtmp and utmp, so it is not recommended |
 | `/var/log/audit/audit.log` | `0600 root`, directory `0700` | `CAP_DAC_READ_SEARCH`, or `log_group = wedgetail-agent` (or `adm`) in `/etc/audit/auditd.conf` |
 | `/var/log/kubernetes/audit/*.log` | usually `0600 root` | `CAP_DAC_READ_SEARCH` |

@@ -5,9 +5,11 @@
 //! Amazon Linux to `/var/log/secure`, but only when rsyslog is installed: Debian 12 and
 //! Amazon Linux 2023 images log to the journal only. Alpine has no journal and busybox
 //! syslogd writes everything to `/var/log/messages`. The pure functions here decide from an
-//! os-release text and a file-exists test so they can be tested with fixtures; the
+//! os-release text and an availability test so they can be tested with fixtures; the
 //! [`checks`] wrappers look at the running host and are registered in
-//! [`crate::presets::RULE_CHECKS`].
+//! [`crate::presets::RULE_CHECKS`]. On a host a log file counts only when the agent can open
+//! it: RHEL's `/var/log/secure` is `0600 root`, so the packaged (unprivileged) service reads
+//! the journal there unless it was granted `CAP_DAC_READ_SEARCH`.
 
 use std::io::Read;
 use std::path::Path;
@@ -211,7 +213,17 @@ pub mod checks {
 
     use super::{OsRelease, Source};
 
+    /// The journal runtime directory and `journalctl` must exist; log files must open.
     fn exists(path: &str) -> bool {
+        if path == super::JOURNAL_RUNTIME_DIR || path == super::JOURNALCTL {
+            Path::new(path).exists()
+        } else {
+            std::fs::File::open(path).is_ok()
+        }
+    }
+
+    /// A package manager is installed (its log may not exist before its first run).
+    fn installed(path: &str) -> bool {
         Path::new(path).exists()
     }
 
@@ -252,24 +264,24 @@ pub mod checks {
     }
 
     pub fn dpkg() -> bool {
-        exists("/var/lib/dpkg/status")
+        installed("/var/lib/dpkg/status")
     }
 
     pub fn apt() -> bool {
-        exists("/var/log/apt")
+        installed("/var/log/apt")
     }
 
     pub fn dnf() -> bool {
-        exists("/var/log/dnf.rpm.log") || exists("/usr/bin/dnf")
+        installed("/var/log/dnf.rpm.log") || installed("/usr/bin/dnf")
     }
 
     /// yum itself (RHEL 7, Amazon Linux 2); on RHEL 8+ `yum` is dnf and logs as dnf.
     pub fn yum() -> bool {
-        exists("/var/log/yum.log") || (exists("/usr/bin/yum") && !exists("/usr/bin/dnf"))
+        installed("/var/log/yum.log") || (installed("/usr/bin/yum") && !installed("/usr/bin/dnf"))
     }
 
     pub fn zypp() -> bool {
-        exists("/var/log/zypp")
+        installed("/var/log/zypp")
     }
 
     /// `linux-auditd`: auditd is running or its log is readable.
