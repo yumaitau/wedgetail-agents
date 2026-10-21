@@ -497,21 +497,21 @@ fn load_merges_rules_d_in_name_order() {
     )
     .expect("write");
     std::fs::write(
-        dir.join("rules.d/20-c.toml"),
+        dir.join("rules.d").join("20-c.toml"),
         "schema_version = 1\n[[rule]]\nid = \"c\"\ntype = \"journald\"\n",
     )
     .expect("write");
     std::fs::write(
-        dir.join("rules.d/10-b.toml"),
+        dir.join("rules.d").join("10-b.toml"),
         "[[rule]]\nid = \"b\"\ntype = \"journald\"\n",
     )
     .expect("write");
     std::fs::write(
-        dir.join("rules.d/9-z.toml"),
+        dir.join("rules.d").join("9-z.toml"),
         "[[rule]]\nid = \"z\"\ntype = \"journald\"\n",
     )
     .expect("write");
-    std::fs::write(dir.join("rules.d/notes.txt"), "ignored").expect("write");
+    std::fs::write(dir.join("rules.d").join("notes.txt"), "ignored").expect("write");
     let config = AgentConfig::load(&dir.join("agent.toml")).expect("loads");
     let ids: Vec<_> = config.rules.iter().map(|r| r.id.as_str()).collect();
     // Byte-wise order: "10-b" < "20-c" < "9-z".
@@ -519,26 +519,30 @@ fn load_merges_rules_d_in_name_order() {
     assert_eq!(config.rules[1].origin.as_ref().map(|o| o.line), Some(1));
     assert_eq!(config.config_dir.as_deref(), Some(dir.as_path()));
 
-    std::fs::write(dir.join("rules.d/30-bad.toml"), "\n[[rule]]\nid = \"d\"\n").expect("write");
     std::fs::write(
-        dir.join("rules.d/40-dup.toml"),
+        dir.join("rules.d").join("30-bad.toml"),
+        "\n[[rule]]\nid = \"d\"\n",
+    )
+    .expect("write");
+    std::fs::write(
+        dir.join("rules.d").join("40-dup.toml"),
         "\n\n[[rule]]\nid = \"b\"\ntype = \"journald\"\n",
     )
     .expect("write");
     std::fs::write(
-        dir.join("rules.d/50-settings.toml"),
+        dir.join("rules.d").join("50-settings.toml"),
         "[agent]\nendpoint = \"https://other.example.com\"\n",
     )
     .expect("write");
     let err = AgentConfig::load(&dir.join("agent.toml")).expect_err("bad files");
     let text = err.to_string();
-    let bad = dir.join("rules.d/30-bad.toml");
+    let bad = dir.join("rules.d").join("30-bad.toml");
     assert!(
         text.contains(&format!("{}:2: missing field `type`", bad.display())),
         "{text}"
     );
-    let dup = dir.join("rules.d/40-dup.toml");
-    let first = dir.join("rules.d/10-b.toml");
+    let dup = dir.join("rules.d").join("40-dup.toml");
+    let first = dir.join("rules.d").join("10-b.toml");
     assert!(
         text.contains(&format!(
             "{}:3: rule id \"b\" is used more than once (first defined at {}:1)",

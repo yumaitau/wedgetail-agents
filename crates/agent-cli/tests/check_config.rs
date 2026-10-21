@@ -49,14 +49,14 @@ fn reports_problems_with_file_and_line() {
     )
     .expect("write");
     std::fs::write(
-        etc.join("rules.d/10-web.toml"),
+        etc.join("rules.d").join("10-web.toml"),
         "# duplicate of agent.toml\n[[rule]]\nid = \"web\"\ntype = \"journald\"\n\n[[rule]]\nid = \"run\"\ntype = \"command\"\n",
     )
     .expect("write");
     let (ok, _, stderr) = check(&etc.join("agent.toml"));
     assert!(!ok, "{stderr}");
     let agent = etc.join("agent.toml");
-    let rules = etc.join("rules.d/10-web.toml");
+    let rules = etc.join("rules.d").join("10-web.toml");
     assert!(stderr.contains("configuration is invalid"), "{stderr}");
     assert!(
         stderr.contains(&format!("{}:8: type \"command\"", rules.display())),
@@ -90,7 +90,7 @@ fn reports_duplicates_across_files_and_accepts_a_valid_config() {
     assert!(stdout.contains("app (file, file)"), "{stdout}");
 
     std::fs::write(
-        etc.join("rules.d/50-dup.toml"),
+        etc.join("rules.d").join("50-dup.toml"),
         format!("[[rule]]\nid = \"app\"\ntype = \"file\"\npaths = [{log:?}]\n"),
     )
     .expect("write");
