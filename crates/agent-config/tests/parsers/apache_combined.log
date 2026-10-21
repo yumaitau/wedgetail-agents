@@ -1,0 +1,4 @@
+192.0.2.10 - frank [21/Oct/2026:08:00:00 +1100] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://www.example.com/start.html" "Mozilla/4.08 [en] (Win98; I ;Nav)"
+192.0.2.11 ident-x - [21/Oct/2026:08:00:01 +1100] "HEAD / HTTP/1.1" 304 - "-" "check/1.0"
+192.0.2.12 - - [21/Oct/2026:08:00:02 +1100] "-" 408 - "-" "-"
+192.0.2.13 - - [21/Oct/2026:08:00:02 +1100] "GET / HTTP/1.1" abc - "-" "-"

@@ -1,0 +1,7 @@
+CEF:0|Example|Threat Manager|1.0|100|worm successfully stopped|10|src=192.0.2.10 dst=198.51.100.20 spt=1232
+Oct 21 08:00:00 fw-01 CEF:0|Example|Firewall|2.3|4000|Blocked connection|5|src=192.0.2.10 dst=198.51.100.20 act=blocked msg=Rule 12 matched: deny all cs1Label=rule cs1=deny all
+CEF:0|Example|App\|Pipe|1.0|sig\\1|Name with \| pipe|3|msg=equals \= sign and backslash \\ and newline\nend fname=C:\\temp\\x.txt
+CEF:1|Vendor|Product|1|id|name|Low|
+CEF:0|only|five|fields|here
+CEF:x|a|b|c|d|e|f|
+NOTCEF:0|a|b|c|d|e|f|g

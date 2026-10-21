@@ -1,0 +1,10 @@
+<34>1 2026-10-21T08:00:00.003Z web-01.example.com su - ID47 - ﻿'su root' failed for alice on /dev/pts/8
+<165>1 2026-10-21T08:00:00.000003-07:00 web-01 myapp 1234 ID47 [exampleSDID@32473 iut="3" eventSource="Application" eventID="1011"] An application event log entry
+<165>1 2026-10-21T08:00:00Z web-01 evntslog - ID47 [exampleSDID@32473 iut="3"][examplePriority@32473 class="high"]
+<13>1 - - - - - -
+<14>1 2026-10-21T08:00:00Z web-01 app - - [x@1 path="C:\\logs\\a \"b\" \]"] escaped
+<34>01 2026-10-21T08:00:00Z h a p m - leading zero version
+<34>1 2026-10-21T08:00:00Z web-01 app
+<192>1 - - - - - - pri too high
+<34>1 - - - - - [unterminated x="1"
+Oct 21 08:00:00 web-01 sshd[1]: not 5424

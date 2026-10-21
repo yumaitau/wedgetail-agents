@@ -8,7 +8,8 @@ It is a collect-and-ship agent only. It does:
 
 - tail log files (rotation and truncation aware), follow the systemd journal, subscribe to
   Windows Event Log channels and stream the macOS unified log;
-- run a redaction/filter hook on every event **before** it is written to disk;
+- filter, sample, rate-limit, redact and parse every event per rule **before** it is written
+  to disk;
 - buffer events durably on disk (bounded, 256 MiB by default) so outages and restarts lose
   nothing until the buffer is full, and count what it drops when it is;
 - batch events as gzip NDJSON within the ingest limits (1 MiB compressed, 5,000 records,
@@ -23,9 +24,9 @@ It does not:
 - use OpenSSL: TLS is [rustls](https://github.com/rustls/rustls) (TLS 1.2 and 1.3) with the
   operating system's certificate verifier, and plain `http://` endpoints are refused.
 
-> Status: early. This release has the runtime, collectors, packaging and enrolment with
-> per-host credentials. The TOML rule schema with redaction rules and the per-OS presets are
-> coming in the next releases.
+> Status: early. This release has the runtime, collectors, packaging, enrolment with per-host
+> credentials and the rule schema (version 1). The per-OS presets are coming in the next
+> releases.
 
 ## Install
 
@@ -63,20 +64,35 @@ each OS, rotation and revocation.
 | Windows | `%ProgramData%\Wedgetail\agent.toml`, `rules.d\*.toml` | `%ProgramData%\Wedgetail\state\` |
 | macOS | `/Library/Application Support/Wedgetail/agent.toml`, `rules.d/*.toml` | `/Library/Application Support/Wedgetail/state/` |
 
-See [`packaging/common/agent.toml`](packaging/common/agent.toml) for every setting. A rule:
+**[docs/rules.md](docs/rules.md)** documents every setting and rule field with examples:
+paths and globs, multiline, parsers, include/exclude matching, redaction, sampling, rate
+limits, presets, and which files a rule may read. A JSON Schema for editors is in
+[`schema/rules.v1.json`](schema/rules.v1.json). For example:
 
 ```toml
+schema_version = 1
+
+[agent]
 endpoint = "https://ingest.example.com"
+presets = ["auto"]
 
 [[rule]]
-id = "nginx.access"
+id = "nginx-access"
 type = "file"            # file | journald | wineventlog | macos_unified
-paths = ["/var/log/nginx/access.log"]
+paths = ["/var/log/nginx/*.log"]
+exclude = ["*.gz"]
+parser = "nginx_combined"
 source_label = "web/nginx"
 tags = { env = "prod" }
+redact = [{ pattern = 'password=\S+', replace = "password=[REDACTED]" }]
+rate_limit = { events_per_second = 500, burst = 2000 }
 ```
 
-Unknown keys are errors, so `wedgetail-agent check-config` catches typos.
+Unknown keys are errors, so `wedgetail-agent check-config` catches typos; it prints every
+problem as `file:line: message` and exits non-zero. Reload with `systemctl reload
+wedgetail-agent` (SIGHUP), `sudo launchctl kill HUP system/au.com.yumait.wedgetail-agent` or
+`sc.exe control WedgetailAgent paramchange`; an invalid configuration is reported and the
+running one kept.
 
 ## Resource use
 
@@ -99,7 +115,11 @@ child process. Linux and Windows figures on real hosts are still to be measured.
   refuses non-admin users, and an admin service account would also be able to use sudo.
 - **No inbound surface.** No listener, no remote commands, no shell, no self-update. Updates
   come from your OS package manager or a signed release.
-- **Secrets stay off disk.** The redaction hook runs before the disk buffer.
+- **Secrets stay off disk.** Rule redaction runs before the disk buffer. Rules cannot read
+  the agent's own state or configuration directories, and symlinks out of a rule's directory
+  are refused.
+- **Bounded work.** Rule regular expressions run in linear time with capped sizes, lines are
+  capped, and all file rules share a cap on open files.
 - **Per-host credentials.** Each host enrols once with a short-lived token (read from standard
   input, an environment variable or a no-echo prompt, never from arguments) and gets its own
   credential, which rotates automatically (30 days by default) and can be revoked alone. It is
@@ -136,14 +156,17 @@ Static Linux build: `rustup target add x86_64-unknown-linux-musl`, install `musl
 ## Layout
 
 ```text
-crates/agent-config      agent.toml + rules.d loading and validation
+crates/agent-config      agent.toml + rules.d + presets loading and validation, parsers, multiline
 crates/agent-collectors  Collector trait; file tail, journald, Windows Event Log, macOS unified log
-crates/agent-core        pipeline, redaction hook, disk buffer, batching, shipper, heartbeat,
-                         enrolment client, credential rotation, Linux credential file
+crates/agent-core        rule pipeline (filter, sample, rate limit, redact, parse), disk buffer,
+                         batching, shipper, heartbeat, enrolment client, credential rotation,
+                         Linux credential file
 crates/agent-cli         the wedgetail-agent binary, enrol command, Windows service glue,
                          DPAPI (Windows) and System keychain (macOS) credential stores
-docs/                    enrolment.md: enrolment, credential storage, rotation, revocation
+docs/                    enrolment.md: enrolment, credential storage, rotation, revocation;
+                         rules.md: configuration and rule reference
 packaging/               systemd unit, launchd plist, WiX source, deb/rpm scripts, pkg builder
+schema/rules.v1.json     JSON Schema for configuration files (generated, checked in CI)
 ```
 
 ## Verifying a release

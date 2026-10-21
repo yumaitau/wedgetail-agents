@@ -38,6 +38,9 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
+      # Also part of `cargo test`; a named step so a stale schema is obvious in the checks.
+      - name: JSON Schema is current (schema/rules.v1.json)
+        run: cargo test --locked -p agent-config json_schema_is_current
 
   deny:
     name: cargo-deny
@@ -120,6 +123,19 @@ jobs:
           sudo wedgetail-agent status
           sudo wedgetail-agent status --json | grep -q '"state": "running"'
           sudo test -n "$(sudo ls /var/lib/wedgetail-agent/buffer)"
+          # Reload: a valid change is applied; an invalid one is refused and the agent keeps
+          # running the last good configuration.
+          printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "journal"\ntype = "journald"\n[[rule]]\nid = "journal-errors"\ntype = "journald"\npriority_max = 3\n' \
+            | sudo tee /etc/wedgetail-agent/agent.toml >/dev/null
+          sudo systemctl reload wedgetail-agent
+          sleep 8
+          sudo wedgetail-agent status --json | grep -q '"journal-errors"'
+          printf '[[rule]]\nid = "Bad Id"\n' | sudo tee /etc/wedgetail-agent/agent.toml >/dev/null
+          if sudo wedgetail-agent check-config; then echo "invalid config accepted"; exit 1; fi
+          sudo systemctl reload wedgetail-agent
+          sleep 3
+          systemctl is-active wedgetail-agent
+          sudo journalctl -u wedgetail-agent --no-pager | grep -q 'keeping the running configuration'
           sudo systemctl stop wedgetail-agent
           sudo dpkg --purge wedgetail-agent
           if id wedgetail-agent 2>/dev/null; then echo "user not removed"; exit 1; fi
@@ -181,6 +197,19 @@ jobs:
           & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" status
           $status = Get-Content "$env:ProgramData\Wedgetail\state\status.json" -Raw | ConvertFrom-Json
           if ($status.collectors[0].state -ne 'running') { throw "collector is $($status.collectors[0].state): $($status.collectors[0].last_error)" }
+          # Reload through the service control: valid changes apply, invalid ones are refused.
+          $config = "endpoint = `"https://ingest.example.invalid`"`n[[rule]]`nid = `"app`"`ntype = `"wineventlog`"`nchannel = `"Application`"`n[[rule]]`nid = `"system`"`ntype = `"wineventlog`"`nchannel = `"System`"`n"
+          Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value $config -Encoding utf8NoBOM
+          sc.exe control WedgetailAgent paramchange
+          if ($LASTEXITCODE -ne 0) { throw "paramchange failed" }
+          Start-Sleep -Seconds 8
+          $status = Get-Content "$env:ProgramData\Wedgetail\state\status.json" -Raw | ConvertFrom-Json
+          if (-not ($status.collectors.rule_id -contains 'system')) { throw "reload not applied" }
+          Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value "[[rule]]`nid = `"Bad Id`"`n" -Encoding utf8NoBOM
+          sc.exe control WedgetailAgent paramchange
+          Start-Sleep -Seconds 3
+          if ((Get-Service WedgetailAgent).Status -ne 'Running') { throw "service stopped after an invalid reload" }
+          if (-not (Select-String -Path "$env:ProgramData\Wedgetail\state\agent.log" -Pattern 'keeping the running configuration' -Quiet)) { throw "invalid reload not logged" }
           Stop-Service WedgetailAgent
           $p = Start-Process msiexec -ArgumentList '/x', 'dist\wedgetail-agent-x86_64.msi', '/qn', '/l*v', 'uninstall.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content uninstall.log -Tail 50; throw "uninstall failed: $($p.ExitCode)" }
@@ -232,6 +261,17 @@ jobs:
           sudo cat /Library/Logs/Wedgetail/agent.log
           sudo wedgetail-agent status
           sudo wedgetail-agent status --json | grep -q '"state": "running"'
+          # Reload with SIGHUP: valid changes apply, invalid ones are refused.
+          printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \
+            | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
+          sudo launchctl kill HUP system/au.com.yumait.wedgetail-agent
+          sleep 8
+          sudo wedgetail-agent status --json | grep -q '"sshd"'
+          printf '[[rule]]\nid = "Bad Id"\n' | sudo tee "/Library/Application Support/Wedgetail/agent.toml" >/dev/null
+          sudo launchctl kill HUP system/au.com.yumait.wedgetail-agent
+          sleep 3
+          sudo launchctl print system/au.com.yumait.wedgetail-agent | grep -E 'state = running'
+          sudo grep -q 'keeping the running configuration' /Library/Logs/Wedgetail/agent.log
           sudo packaging/macos/uninstall.sh --purge
           test ! -e /usr/local/bin/wedgetail-agent
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -1,6 +1,7 @@
 //! The Wedgetail agent runtime.
 //!
-//! - [`agent::Agent`] wires collectors, the [`processor::Processor`] hook, the
+//! - [`agent::Agent`] wires collectors, the [`processor::Processor`] hook (by default the
+//!   configured [`rules::RuleProcessor`]), the
 //!   [`buffer::DiskBuffer`], the [`shipper::Shipper`] and the heartbeat together.
 //! - [`credential::CredentialProvider`] supplies the host credential before every request;
 //!   [`credential::CredentialStore`] also replaces it. [`enrolment`] enrols the host and
@@ -17,6 +18,7 @@ pub mod credential;
 pub mod enrolment;
 pub mod host;
 pub mod processor;
+pub mod rules;
 pub mod shipper;
 pub mod stop;
 pub mod telemetry;
@@ -26,4 +28,5 @@ pub use credential::{
     CredentialProvider, CredentialStore, FileCredential, Secret, StaticCredential,
 };
 pub use processor::{PassThrough, Processor, Verdict};
+pub use rules::RuleProcessor;
 pub use stop::Stop;

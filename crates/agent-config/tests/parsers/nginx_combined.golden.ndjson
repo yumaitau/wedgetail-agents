@@ -1,0 +1,5 @@
+{"body_bytes_sent":5123,"http_referer":"https://www.example.com/shop","http_user_agent":"Mozilla/5.0 (X11; Linux x86_64)","method":"GET","path":"/shop/cart?id=7","protocol":"HTTP/1.1","remote_addr":"192.0.2.10","request":"GET /shop/cart?id=7 HTTP/1.1","status":200,"time_local":"21/Oct/2026:08:00:00 +0000"}
+{"body_bytes_sent":0,"http_user_agent":"curl/8.5.0","method":"POST","path":"/login","protocol":"HTTP/2.0","remote_addr":"203.0.113.5","remote_user":"alice","request":"POST /login HTTP/2.0","status":401,"time_local":"21/Oct/2026:08:00:01 +0000"}
+{"body_bytes_sent":157,"remote_addr":"198.51.100.20","request":"\\x16\\x03\\x01","status":400,"time_local":"21/Oct/2026:08:00:02 +0000"}
+{"body_bytes_sent":12,"http_user_agent":"agent \\\"x\\\"","method":"GET","path":"/q?\\\"quoted\\\"","protocol":"HTTP/1.1","remote_addr":"192.0.2.10","request":"GET /q?\\\"quoted\\\" HTTP/1.1","status":200,"time_local":"21/Oct/2026:08:00:03 +0000"}
+null

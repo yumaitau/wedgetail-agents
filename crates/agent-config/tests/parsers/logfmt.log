@@ -1,0 +1,6 @@
+level=info msg="user logged in" user=alice src_ip=192.0.2.10 duration=12ms
+ts=2026-10-21T08:00:00Z level=error msg="quoted \"inner\" and \\ backslash\nnewline" ok
+key= empty=""
+msg="unterminated
+=novalue
+just some words

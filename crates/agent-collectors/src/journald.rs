@@ -91,8 +91,12 @@ fn cut(mut s: String) -> String {
     s
 }
 
-/// `journalctl` arguments for a start position and match list.
-pub fn journalctl_args(cursor: Option<&str>, matches: &[String]) -> Vec<String> {
+/// `journalctl` arguments for a start position, match list and highest priority kept.
+pub fn journalctl_args(
+    cursor: Option<&str>,
+    matches: &[String],
+    priority_max: Option<u8>,
+) -> Vec<String> {
     let mut args = vec![
         "--output=json".to_owned(),
         "--follow".to_owned(),
@@ -103,6 +107,10 @@ pub fn journalctl_args(cursor: Option<&str>, matches: &[String]) -> Vec<String> 
     match cursor {
         Some(c) => args.push(format!("--after-cursor={c}")),
         None => args.push("--lines=0".to_owned()),
+    }
+    // A single level keeps it and every more severe one.
+    if let Some(p) = priority_max {
+        args.push(format!("--priority={p}"));
     }
     // Validated as FIELD=value by agent-config, so none can be read as an option.
     args.extend(matches.iter().cloned());
@@ -127,15 +135,21 @@ mod collector {
     pub struct Journald {
         template: EventTemplate,
         matches: Vec<String>,
+        priority_max: Option<u8>,
         cursor: Option<String>,
         process: Option<LineProcess>,
     }
 
     impl Journald {
-        pub fn new(template: EventTemplate, matches: Vec<String>) -> Self {
+        pub fn new(
+            template: EventTemplate,
+            matches: Vec<String>,
+            priority_max: Option<u8>,
+        ) -> Self {
             Self {
                 template,
                 matches,
+                priority_max,
                 cursor: None,
                 process: None,
             }
@@ -153,7 +167,11 @@ mod collector {
             }
             self.process = None;
             let mut command = Command::new(JOURNALCTL);
-            command.args(journalctl_args(self.cursor.as_deref(), &self.matches));
+            command.args(journalctl_args(
+                self.cursor.as_deref(),
+                &self.matches,
+                self.priority_max,
+            ));
             self.process = Some(LineProcess::spawn(command)?);
             Ok(())
         }
@@ -250,15 +268,21 @@ mod tests {
 
     #[test]
     fn args_resume_after_cursor() {
-        let args = journalctl_args(Some("s=1;i=2"), &["_SYSTEMD_UNIT=ssh.service".to_owned()]);
+        let args = journalctl_args(
+            Some("s=1;i=2"),
+            &["_SYSTEMD_UNIT=ssh.service".to_owned()],
+            Some(4),
+        );
+        assert!(args.contains(&"--priority=4".to_owned()));
         assert!(args.contains(&"--after-cursor=s=1;i=2".to_owned()));
         assert!(!args.contains(&"--lines=0".to_owned()));
         assert_eq!(
             args.last().map(String::as_str),
             Some("_SYSTEMD_UNIT=ssh.service")
         );
-        let args = journalctl_args(None, &[]);
+        let args = journalctl_args(None, &[], None);
         assert!(args.contains(&"--lines=0".to_owned()));
+        assert!(!args.iter().any(|a| a.starts_with("--priority")));
         assert!(args.contains(&"--output=json".to_owned()));
     }
 }
@@ -319,7 +343,7 @@ mod os_tests {
         let ident = format!("wt-test-{}", std::process::id());
         let template = EventTemplate::new("j", "journald", None, &BTreeMap::new());
         let matches = vec![format!("SYSLOG_IDENTIFIER={ident}")];
-        let mut c = Journald::new(template.clone(), matches.clone());
+        let mut c = Journald::new(template.clone(), matches.clone(), None);
         c.start(None).expect("start");
         std::thread::sleep(Duration::from_secs(1));
         send(&ident, "one");
@@ -328,7 +352,7 @@ mod os_tests {
         drop(c);
 
         send(&ident, "two");
-        let mut c = Journald::new(template, matches);
+        let mut c = Journald::new(template, matches, None);
         c.start(cp).expect("restart");
         let (got, _) = collect(&mut c, 2, 5);
         assert_eq!(got, ["two"]);

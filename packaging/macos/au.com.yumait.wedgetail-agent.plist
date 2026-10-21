@@ -33,6 +33,12 @@
     <true/>
     <key>Nice</key>
     <integer>10</integer>
+    <!-- Room for [agent] max_open_files (default 1,000 tailed files); launchd's default is 256. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
     <key>Umask</key>
     <integer>63</integer>
     <key>StandardErrorPath</key>

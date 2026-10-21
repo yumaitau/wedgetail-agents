@@ -20,16 +20,21 @@ crc32fast = "1.5"
 fastrand = "2.3"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 gethostname = "1"
+glob = "0.3"
 log = "0.4"
 quick-xml = "0.42"
 # Test-only: a self-signed certificate to prove untrusted servers are refused.
 rcgen = { version = "0.14", default-features = false, features = ["ring"] }
 # Reads the enrolment token from the terminal without echo.
 rpassword = "7.4"
+# Linear-time regular expressions (no backtracking) for rule patterns and parsers.
+regex = "1.12"
 # ring as the only crypto provider: no OpenSSL, no aws-lc C/CMake toolchain for musl and cross builds.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+signal-hook = "0.4"
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 # macOS System keychain for the host credential (already used by rustls-platform-verifier).
 security-framework = "3.7"

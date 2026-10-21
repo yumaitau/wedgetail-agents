@@ -1,0 +1,10 @@
+{"app_name":"su","facility":4,"hostname":"web-01.example.com","message":"'su root' failed for alice on /dev/pts/8","msg_id":"ID47","priority":34,"severity":2,"timestamp":"2026-10-21T08:00:00.003Z","version":1}
+{"app_name":"myapp","facility":20,"hostname":"web-01","message":"An application event log entry","msg_id":"ID47","priority":165,"proc_id":"1234","severity":5,"structured_data":{"exampleSDID@32473":{"eventID":"1011","eventSource":"Application","iut":"3"}},"timestamp":"2026-10-21T08:00:00.000003-07:00","version":1}
+{"app_name":"evntslog","facility":20,"hostname":"web-01","msg_id":"ID47","priority":165,"severity":5,"structured_data":{"examplePriority@32473":{"class":"high"},"exampleSDID@32473":{"iut":"3"}},"timestamp":"2026-10-21T08:00:00Z","version":1}
+{"facility":1,"priority":13,"severity":5,"version":1}
+{"app_name":"app","facility":1,"hostname":"web-01","message":"escaped","priority":14,"severity":6,"structured_data":{"x@1":{"path":"C:\\logs\\a \"b\" ]"}},"timestamp":"2026-10-21T08:00:00Z","version":1}
+null
+null
+null
+null
+null

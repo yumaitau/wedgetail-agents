@@ -8,6 +8,9 @@ ConditionPathExists=/etc/wedgetail-agent/agent.toml
 [Service]
 Type=simple
 ExecStart=/usr/bin/wedgetail-agent run --config /etc/wedgetail-agent/agent.toml
+# SIGHUP reloads agent.toml and rules.d; an invalid configuration is logged and the running
+# one kept.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=30s
@@ -29,6 +32,8 @@ ReadWritePaths=/var/lib/wedgetail-agent
 CPUQuota=25%
 MemoryHigh=128M
 MemoryMax=256M
+# Room for [agent] max_open_files (default 1,000 tailed files) plus the agent's own files.
+LimitNOFILE=8192
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

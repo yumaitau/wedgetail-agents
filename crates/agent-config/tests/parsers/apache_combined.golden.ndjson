@@ -1,0 +1,4 @@
+{"body_bytes_sent":2326,"http_referer":"http://www.example.com/start.html","http_user_agent":"Mozilla/4.08 [en] (Win98; I ;Nav)","method":"GET","path":"/apache_pb.gif","protocol":"HTTP/1.0","remote_addr":"192.0.2.10","remote_user":"frank","request":"GET /apache_pb.gif HTTP/1.0","status":200,"time_local":"21/Oct/2026:08:00:00 +1100"}
+{"http_user_agent":"check/1.0","ident":"ident-x","method":"HEAD","path":"/","protocol":"HTTP/1.1","remote_addr":"192.0.2.11","request":"HEAD / HTTP/1.1","status":304,"time_local":"21/Oct/2026:08:00:01 +1100"}
+{"remote_addr":"192.0.2.12","status":408,"time_local":"21/Oct/2026:08:00:02 +1100"}
+null
