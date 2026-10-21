@@ -101,6 +101,7 @@ fn tail(rule: &Rule, fixture: &str, real_path: &str) -> Vec<RawEvent> {
         events.extend(batch.events);
     }
     let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(events.len(), want, "{fixture}: events read");
     for e in &mut events {
         e.ts_us = FILE_TS_US;
         e.attrs.insert("path".into(), real_path.into());

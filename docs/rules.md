@@ -323,10 +323,11 @@ level = "info"
 | `level` | string | `"info"` | `default`, `info` or `debug` (very noisy): the least severe messages streamed. |
 
 `log stream` evaluates the predicate against every message at the chosen level, in its own
-process, and each `macos_unified` rule runs one `log stream`. Keep rules few, and make each
-predicate start with `process ==` or `subsystem ==` terms joined by `AND`: a predicate that
-is an `OR` across many processes, or that tests `eventMessage` on its own, costs much more
-CPU. The measurements behind this are in [the macOS preset guide](presets/macos.md#cpu).
+process, and each `macos_unified` rule runs one `log stream`. Anchor every alternative of a
+predicate with `process ==` or `subsystem ==` (`OR` between such terms is fine): the log
+system then filters before the message reaches `log`. `process IN {...}`, or an
+`eventMessage` test that is not inside an anchored term, makes `log` receive and test every
+message on the system and costs several per cent of a core. The measurements behind this are in [the macOS preset guide](presets/macos.md#cpu).
 
 ## `type = "macos_bsm"`
 

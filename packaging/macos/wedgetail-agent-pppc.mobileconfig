@@ -40,8 +40,6 @@
                 <key>SystemPolicyAllFiles</key>
                 <array>
                     <dict>
-                        <key>Allowed</key>
-                        <true/>
                         <key>Authorization</key>
                         <string>Allow</string>
                         <key>CodeRequirement</key>

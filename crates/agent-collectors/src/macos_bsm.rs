@@ -21,8 +21,9 @@ use serde_json::{Map, Value};
 
 use crate::MAX_LINE_BYTES;
 
-/// Largest record accepted. The kernel's limit is far lower; anything bigger is corrupt.
-pub const MAX_RECORD_BYTES: usize = 1024 * 1024;
+/// Largest record accepted. The kernel's limit is far lower; anything bigger is corrupt. Kept
+/// below the collector's 512 KiB read so a bogus length is always skipped, never waited for.
+pub const MAX_RECORD_BYTES: usize = 256 * 1024;
 /// Most string bytes kept per record (token values and arguments). The rest is dropped and
 /// the event is marked `attrs.truncated`, so a huge command line cannot push the event over
 /// the agent's event size limit and get it dropped whole.
@@ -357,8 +358,17 @@ fn finish(record: &mut Option<Record>, table: &EventTable, classes: &[String], o
         fields.insert("modifier".into(), Value::from(m));
     }
     for token in r.tokens {
-        let value = if matches!(token.name.as_str(), "exec_args" | "exec_env") {
+        let value = if token.name == "exec_args" {
             Value::Array(token.items.into_iter().map(Value::String).collect())
+        } else if token.name == "exec_env" {
+            // Variable names only: values often hold tokens and passwords.
+            Value::Array(
+                token
+                    .items
+                    .into_iter()
+                    .map(|v| Value::String(v.split('=').next().unwrap_or_default().to_owned()))
+                    .collect(),
+            )
         } else if token.attrs.is_empty() {
             Value::String(token.text)
         } else {
@@ -400,6 +410,24 @@ fn finish(record: &mut Option<Record>, table: &EventTable, classes: &[String], o
     });
 }
 
+/// The trail auditd started after the one that started at `start` (the 14-digit prefix of a
+/// trail name, `20261021080000` in `20261021080000.20261021090000`), from a directory listing.
+/// Trails are named by start time, so this is the smallest later start.
+pub fn next_trail<'a>(names: &'a [String], start: &str) -> Option<&'a str> {
+    names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| trail_start(n).is_some_and(|s| s > start))
+        .min_by_key(|n| trail_start(n))
+}
+
+/// The start time of a trail file name, `None` for other files (`current`, `crash...`).
+pub fn trail_start(name: &str) -> Option<&str> {
+    let (start, end) = name.split_once('.')?;
+    let digits = |s: &str| s.len() == 14 && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(start) && (digits(end) || end == "not_terminated")).then_some(start)
+}
+
 fn cut(s: &str, max: usize) -> String {
     let mut end = s.len().min(max);
     while !s.is_char_boundary(end) {
@@ -424,7 +452,7 @@ mod collector {
 
     use serde_json::Value;
 
-    use super::{EventTable, frame_records, parse_praudit};
+    use super::{EventTable, frame_records, next_trail, parse_praudit, trail_start};
     use crate::{Batch, Checkpoint, Collector, CollectorError, EventTemplate, FilePosition};
 
     pub const AUDIT_DIR: &str = "/var/audit";
@@ -476,6 +504,8 @@ mod collector {
         event_file: PathBuf,
         table: EventTable,
         trail: Option<Trail>,
+        /// `current` moved on and the old trail has been read once more since.
+        rotation_drained: bool,
         buf: Vec<u8>,
     }
 
@@ -498,6 +528,7 @@ mod collector {
                 event_file,
                 table: EventTable::default(),
                 trail: None,
+                rotation_drained: false,
                 buf: Vec::new(),
             }
         }
@@ -523,6 +554,22 @@ mod collector {
                         .is_ok_and(|m| m.is_file() && m.dev() == dev && m.ino() == ino)
                 })
                 .map(|e| e.path())
+        }
+
+        /// The trail after `path` (by start time), else `current`.
+        fn next(&self, path: &Path, current: PathBuf) -> PathBuf {
+            let names: Vec<String> = fs::read_dir(&self.dir)
+                .map(|d| {
+                    d.filter_map(Result::ok)
+                        .filter_map(|e| e.file_name().into_string().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(trail_start)
+                .and_then(|start| next_trail(&names, start))
+                .map_or(current, |n| self.dir.join(n))
         }
 
         /// Read and convert the next complete records of the open trail.
@@ -665,28 +712,39 @@ mod collector {
                 if !events.is_empty() {
                     break;
                 }
-                if !progressed {
-                    // Nothing new: has auditd moved on to a new trail? The old one was
-                    // read to the end above, after the rotation, so nothing is lost.
-                    let current = self.current()?;
-                    let meta = fs::metadata(&current)?;
-                    if self
-                        .trail
-                        .as_ref()
-                        .is_some_and(|t| (t.dev, t.ino) != (meta.dev(), meta.ino()))
-                    {
-                        log::info!("audit trail rotated to {}", current.display());
-                        self.trail = Some(Trail::open(&current, Some(0))?);
-                        continue;
-                    }
-                    let now = Instant::now();
-                    if now >= deadline {
+                if progressed {
+                    self.rotation_drained = false;
+                    if Instant::now() >= deadline {
                         break;
                     }
-                    thread::sleep(CHECK_INTERVAL.min(deadline - now));
-                } else if Instant::now() >= deadline {
+                    continue;
+                }
+                // Nothing new: has auditd moved on to a new trail?
+                let current = self.current()?;
+                let meta = fs::metadata(&current)?;
+                if let Some(old) = self
+                    .trail
+                    .as_ref()
+                    .filter(|t| (t.dev, t.ino) != (meta.dev(), meta.ino()))
+                {
+                    // Read the old trail once more after seeing the switch, for records
+                    // written just before it, then move to the next trail by start time
+                    // (more than one may have been started while the agent was stopped).
+                    if !self.rotation_drained {
+                        self.rotation_drained = true;
+                        continue;
+                    }
+                    let next = self.next(&old.path, current);
+                    log::info!("audit trail rotated to {}", next.display());
+                    self.trail = Some(Trail::open(&next, Some(0))?);
+                    self.rotation_drained = false;
+                    continue;
+                }
+                let now = Instant::now();
+                if now >= deadline {
                     break;
                 }
+                thread::sleep(CHECK_INTERVAL.min(deadline - now));
             }
             Ok(Batch {
                 events,

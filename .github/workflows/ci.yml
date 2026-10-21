@@ -290,6 +290,9 @@ jobs:
           if [ ! -f /etc/security/audit_control ] && [ -f /etc/security/audit_control.example ]; then
             sudo cp /etc/security/audit_control.example /etc/security/audit_control
           fi
+          # The launchd job ships disabled; enable and load it, then start auditing.
+          sudo launchctl enable system/com.apple.auditd || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist || true
           sudo audit -i || true
           sleep 2
           sudo ls -l /var/audit || true
@@ -313,10 +316,10 @@ jobs:
           sudo -k
           sudo /usr/bin/true
           sleep 5
-          sudo sh -c 'grep -ac "\"source_type\":\"macos.unified\",\"rule_id\":\"macos-core.auth\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+          sudo sh -c 'grep -aoE "\"rule_id\":\"macos-core\.auth\"[^}]*COMMAND=/usr/bin/true" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
           # sudo is class aa, which the default audit_control flags (lo,aa) record.
           if $audit; then
-            sudo sh -c 'grep -ac "\"source_type\":\"macos.bsm\",\"rule_id\":\"macos-audit.trail\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
+            sudo sh -c 'grep -aoE "\"rule_id\":\"macos-audit\.trail\"[^}]*\"event\":\"AUE_sudo\"" "/Library/Application Support/Wedgetail/state/buffer/"*.seg'
           fi
           # Reload with SIGHUP: valid changes apply, invalid ones are refused.
           printf 'endpoint = "https://ingest.example.invalid"\n[[rule]]\nid = "auth"\ntype = "macos_unified"\npredicate = "process == \\"logger\\""\n[[rule]]\nid = "sshd"\ntype = "macos_unified"\npredicate = "process == \\"sshd\\""\nlevel = "default"\n' \

@@ -269,7 +269,9 @@ daemons that log through syslog). When the file does not exist the rule waits fo
 
 Reads the trail auditd is writing (`/var/audit/current`, a symlink to
 `/var/audit/<start>.not_terminated`) and follows it across rotations: when auditd renames
-the trail to `<start>.<end>` and starts a new one, the old file is read to its end first.
+the trail to `<start>.<end>` and starts a new one, the old file is read to its end once more
+after the switch is seen, then the next trail by start time is read (so trails started while
+the agent was stopped are not skipped), up to the current one.
 Records are framed from the binary trail by the agent (header and trailer tokens), so a
 half-written record is never sent and garbage is skipped to the next valid record; each
 chunk of up to 512 KiB is converted with `/usr/sbin/praudit -x -r` (XML, numeric form, so
@@ -335,7 +337,9 @@ A line the expression does not match is sent with no `fields` and `attrs.parse_e
 `body` is `null`; `ts` is the record time (header seconds and milliseconds, UTC);
 `attrs.path` is the trail file; `attrs.truncated = true` when strings were cut (more than
 128 KiB of strings, 256 tokens or 1,024 arguments in one record), so a huge command line is
-shortened rather than dropping the event. `fields`:
+shortened rather than dropping the event. A record longer than 256 KiB, or bytes that are not
+a record (checked against the header length and the trailer), are skipped and logged.
+`fields`:
 
 | Key | Type | Example | Notes |
 | --- | --- | --- | --- |
@@ -347,7 +351,7 @@ shortened rather than dropping the event. `fields`:
 | `return` | object | `{"errval": "0", "retval": "0"}` | `errval` 0 is success, otherwise an errno-style code (for example `1` for a failed sudo, `255` for a failed authentication) |
 | `text` | array of strings | `["successful login alice"]` | text tokens, in order |
 | `exec_args` | array of strings | `["sudo", "/usr/bin/whoami"]` | command line (`ex` events and `AUE_sudo`) |
-| `exec_env` | array of strings | | environment, when the `argv`/`arge` audit policy records it |
+| `exec_env` | array of strings | `["PATH", "AWS_SECRET_ACCESS_KEY"]` | environment variable **names** only, when the `arge` audit policy records the environment; values are dropped on the host because they often hold tokens and passwords |
 | `path` | array of strings | `["/bin/sh"]` | |
 | `attribute` | array of objects | `[{"mode": "100755", "uid": "0", "gid": "0", "fsid": "16777234", "nodeid": "1152921500311879000", "device": "0"}]` | file attributes for each path; `mode` is octal |
 | `argument` | array of objects | `[{"arg_num": "1", "value": "0x0", "desc": "..."}]` | system call arguments |
@@ -376,8 +380,8 @@ All token values are strings exactly as `praudit -r` prints them (numbers in dec
   real `log` on macOS.
 - **`macos-audit.trail`.** The checkpoint is the trail file identity (device and inode) and
   the byte offset after the last whole record. After a restart the agent finds the file by
-  identity even if auditd renamed it on rotation, reads the rest of it, then moves on to the
-  current trail. Without a checkpoint it starts at the end of the current trail. Tested
+  identity even if auditd renamed it on rotation, reads the rest of it, then every later
+  trail in start-time order. Without a checkpoint it starts at the end of the current trail. Tested
   with the real `praudit` and a simulated rotation in
   `crates/agent-collectors/src/macos_bsm/tests.rs`.
 - **File rules** use the agent's file checkpoints ([docs/rules.md](../rules.md#type--file)).
@@ -424,7 +428,27 @@ info level) measured, over 180 s windows (baseline `diagnosticd` 1.23 s with no 
 The shipped `macos-core`, run as the real agent (release build, all 8 rules, not enrolled
 so nothing was sent), over two 300 s windows:
 
-MEASUREMENTS_TABLE
+| Window (300 s, fresh state) | agent | 6 `log` children | `diagnosticd` above the window before | Total |
+| --- | --- | --- | --- | --- |
+| 1 | 0.24% | 1.55% | +0.61% | about 2.4% |
+| 2 | 0.22% | 1.01% | +0.63% | about 1.9% |
+| 3 (per child) | 0.26% | 1.13%, of which `macos-core.gatekeeper` 1.06%, `macos-core.tcc` 0.06%, the other four 0.00% | about +0.5% | about 1.9% |
+
+Memory: agent 12.5 to 14.7 MB RSS, the six `log stream` children about 30 MB together.
+`logd` CPU did not change measurably (2.2 to 3.3 s per window with and without the agent).
+
+Almost all of it is `macos-core.gatekeeper`. Its predicate is anchored on
+`subsystem == "com.apple.syspolicy.exec"`, and on this Mac `syspolicyd` logs hundreds of
+default- and error-level messages a second in that subsystem while processes are being
+started (`Unable to initialize qtn_proc`, during builds), which the log system has to hand to
+`log` for the `eventMessage` test. Measured on its own it ranged from 0.1% (quiet minute) to
+2.5% (builds running). A Mac that is not compiling software all day will be at the low
+end; on build machines consider `disable_rules = ["macos-core.gatekeeper"]`. Without it the
+preset measured about 0.5 to 1% in total.
+
+Restarting the agent with saved checkpoints runs one `log show` per unified rule to catch up
+on the gap; after a 5 minute stop that cost about 6 s of CPU once (plus about 6 s in
+`diagnosticd`).
 
 Six `log stream` processes is a deliberate trade: merging them into one would not lower CPU
 (each is filtered by `diagnosticd`, and an idle `log stream` costs nothing measurable) but

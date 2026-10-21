@@ -65,9 +65,53 @@ fn garbage_is_skipped_to_the_next_record() {
     assert_eq!(f.records, 9);
     assert_eq!(f.skipped, first);
 
-    // An absurd length is not waited for.
+    // An absurd length is not waited for, nor one longer than a record can be but shorter
+    // than the collector's read.
     let f = frame_records(b"\x14\xff\xff\xff\xff\x0b\x00\x00", usize::MAX);
     assert_eq!((f.records, f.skipped, f.consumed), (0, 8, 8));
+    let mut buf = vec![0x14];
+    buf.extend_from_slice(&(300u32 * 1024).to_be_bytes());
+    buf.extend_from_slice(TRAIL);
+    let f = frame_records(&buf, usize::MAX);
+    assert_eq!((f.records, f.skipped), (10, 5));
+}
+
+#[test]
+fn trail_names() {
+    assert_eq!(
+        trail_start("20261021080000.not_terminated"),
+        Some("20261021080000")
+    );
+    assert_eq!(
+        trail_start("20261021080000.20261021090000"),
+        Some("20261021080000")
+    );
+    for other in [
+        "current",
+        "crash.20261021080000",
+        "2026.not_terminated",
+        "x.y",
+        "",
+    ] {
+        assert_eq!(trail_start(other), None, "{other}");
+    }
+    let names: Vec<String> = [
+        "current",
+        "20261021100000.not_terminated",
+        "20261021080000.20261021090000",
+        "20261021090000.20261021100000",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(
+        next_trail(&names, "20261021080000"),
+        Some("20261021090000.20261021100000")
+    );
+    assert_eq!(
+        next_trail(&names, "20261021090000"),
+        Some("20261021100000.not_terminated")
+    );
+    assert_eq!(next_trail(&names, "20261021100000"), None);
 }
 
 #[test]
@@ -175,6 +219,16 @@ fn hostile_xml() {
     ));
     let p = parse_praudit(&xml, &table, &[]);
     assert_eq!((p.records.len(), p.errors), (0, 3));
+
+    // Environment variables: names only, values never leave the host.
+    let xml = doc(&format!(
+        "{HEAD}<exec_env><env>AWS_SECRET_ACCESS_KEY=abc123</env><env>PATH=/usr/bin</env><env>BARE</env></exec_env></record>"
+    ));
+    let p = parse_praudit(&xml, &table, &[]);
+    assert_eq!(
+        p.records[0].fields["exec_env"],
+        json!(["AWS_SECRET_ACCESS_KEY", "PATH", "BARE"])
+    );
 
     // DOCTYPE (entity expansion) is refused.
     let p = parse_praudit(
@@ -341,26 +395,37 @@ mod os_tests {
         assert_eq!(ids, [45028, 32800]);
         drop(c);
 
-        // While stopped: more records, then auditd rotates and writes to a new trail.
+        // While stopped: more records, then auditd rotates twice.
         append(&first, &records(4..5));
         fs::rename(&first, dir.join("20261021080000.20261021090000")).expect("rename");
-        append(&dir.join("20261021090000.not_terminated"), &records(5..10));
-        link(&dir, "20261021090000.not_terminated");
+        let second = dir.join("20261021090000.not_terminated");
+        append(&second, &records(5..7));
+        fs::rename(&second, dir.join("20261021090000.20261021100000")).expect("rename");
+        append(&dir.join("20261021100000.not_terminated"), &records(7..10));
+        link(&dir, "20261021100000.not_terminated");
 
         let mut c = new();
         c.start(checkpoint).expect("restart");
         let (ids, checkpoint) = drain(&mut c);
-        // The rest of the old trail, then the new one (the file read and the unknown event
-        // are filtered out).
+        // The rest of the old trail, the whole middle one, then the current one (the file
+        // read and the unknown event are filtered out).
         assert_eq!(ids, [45021, 6153, 6207, 23]);
         match checkpoint {
             Some(Checkpoint::File { files }) => {
                 let (path, pos) = files.into_iter().next().expect("position");
-                assert!(path.ends_with("20261021090000.not_terminated"), "{path:?}");
-                assert_eq!(pos.offset, records(5..10).len() as u64);
+                assert!(path.ends_with("20261021100000.not_terminated"), "{path:?}");
+                assert_eq!(pos.offset, records(7..10).len() as u64);
             }
             other => panic!("checkpoint {other:?}"),
         }
+
+        // Records written to the old trail just before a switch are still read.
+        let third = dir.join("20261021100000.not_terminated");
+        append(&third, &records(1..2));
+        fs::rename(&third, dir.join("20261021100000.20261021110000")).expect("rename");
+        append(&dir.join("20261021110000.not_terminated"), &records(3..4));
+        link(&dir, "20261021110000.not_terminated");
+        assert_eq!(drain(&mut c).0, [45028, 32800]);
 
         // auditd stopped: `current` is gone.
         fs::remove_file(dir.join("current")).expect("unlink");
