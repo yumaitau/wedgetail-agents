@@ -8,6 +8,9 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
 
 use agent_config::AgentConfig;
 use agent_core::enrolment::RotationOptions;
@@ -29,7 +32,8 @@ Usage: wedgetail-agent <command> [options]
 Commands:
   run            Run the agent in the foreground (the service manager runs this)
   enrol          Enrol this host with Wedgetail (run as root or an administrator)
-  check-config   Validate agent.toml and rules.d, then exit
+  check-config   Validate agent.toml, rules.d and presets, print every problem with its
+                 file and line, then exit (non-zero when invalid)
   status         Show enrolment and the running agent's last status
   version        Print the version
 
@@ -49,6 +53,10 @@ else from a prompt that does not echo:
 Environment:
   WEDGETAIL_LOG          error, warn, info (default) or debug
   WEDGETAIL_ENROL_TOKEN  enrol: the enrolment token
+
+Reloading the configuration (an invalid one is reported and the running one kept):
+  Linux, macOS   send SIGHUP (systemctl reload wedgetail-agent)
+  Windows        sc.exe control WedgetailAgent paramchange
 ";
 
 #[derive(Debug, Default)]
@@ -150,8 +158,11 @@ fn load(config_path: &Path) -> Result<AgentConfig, String> {
     AgentConfig::load(config_path).map_err(|e| e.to_string())
 }
 
-/// Build the agent for a loaded config. Shared by `run` and the Windows service.
+/// Build the agent for a loaded config. Shared by `run`, reloads and the Windows service.
 fn build_agent(config: AgentConfig) -> Result<Agent, String> {
+    for warning in &config.warnings {
+        log::warn!("{warning}");
+    }
     let store = credential_store(&config.state_dir);
     Agent::new(config, store.clone())
         .map(|agent| agent.with_rotation(store, RotationOptions::default()))
@@ -184,7 +195,7 @@ fn enrol_command(config_path: &Path, args: &Args) -> Result<(), String> {
     let (endpoint, state_dir) = match (&args.endpoint, config) {
         (Some(endpoint), Ok(config)) => {
             let endpoint = endpoint.trim_end_matches('/').to_owned();
-            agent_config::validate_endpoint(&endpoint).map_err(|e| e.to_string())?;
+            agent_config::validate_endpoint(&endpoint)?;
             if config.endpoint_base() != endpoint {
                 warn(&format!(
                     "{} sends to {}; set endpoint = \"{endpoint}\" there so the agent uses \
@@ -206,7 +217,7 @@ fn enrol_command(config_path: &Path, args: &Args) -> Result<(), String> {
             ));
         }
     };
-    agent_config::validate_endpoint(&endpoint).map_err(|e| e.to_string())?;
+    agent_config::validate_endpoint(&endpoint)?;
     let store = credential_store(&state_dir);
     let message = enrol::enrol(store.as_ref(), &endpoint, &state_dir, args.force, || {
         let stdin = std::io::stdin();
@@ -223,16 +234,95 @@ fn enrol_command(config_path: &Path, args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// A request to the running agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Control {
+    Stop,
+    Reload,
+}
+
+/// Run the agent until [`Control::Stop`] (or until every sender is gone). On
+/// [`Control::Reload`] the configuration is loaded again; if it is valid the pipeline restarts
+/// with it, otherwise the problems are logged and the running configuration is kept. The disk
+/// buffer and checkpoints carry over, so a reload neither loses nor repeats events.
+pub(crate) fn supervise(config_path: &Path, control: &Receiver<Control>) -> Result<(), String> {
+    let mut agent = build_agent(load(config_path)?)?;
+    loop {
+        let stop = Stop::new();
+        let handle = {
+            let stop = stop.clone();
+            thread::Builder::new()
+                .name("agent".into())
+                .spawn(move || agent.run(stop))
+                .map_err(|e| format!("cannot start the agent: {e}"))?
+        };
+        let next = loop {
+            match control.recv_timeout(Duration::from_millis(500)) {
+                Ok(Control::Stop) | Err(RecvTimeoutError::Disconnected) => break None,
+                Ok(Control::Reload) => match load(config_path).and_then(build_agent) {
+                    Ok(next) => break Some(next),
+                    Err(e) => log::error!(
+                        "reload: {} is invalid; keeping the running configuration:\n{e}",
+                        config_path.display()
+                    ),
+                },
+                Err(RecvTimeoutError::Timeout) if handle.is_finished() => break None,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        };
+        stop.stop();
+        let result = handle
+            .join()
+            .map_err(|_| "the agent thread panicked".to_owned())?
+            .map_err(|e| e.to_string());
+        match next {
+            None => return result,
+            Some(next) => {
+                result?;
+                log::info!("configuration reloaded from {}", config_path.display());
+                agent = next;
+            }
+        }
+    }
+}
+
+/// Foreground run: SIGINT and SIGTERM stop, SIGHUP reloads.
+#[cfg(unix)]
 fn run(config_path: &Path) -> Result<(), String> {
-    let agent = build_agent(load(config_path)?)?;
-    let stop = Stop::new();
-    let handler_stop = stop.clone();
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let (tx, rx) = mpsc::channel();
+    let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM])
+        .map_err(|e| format!("cannot install the signal handler: {e}"))?;
+    thread::Builder::new()
+        .name("signals".into())
+        .spawn(move || {
+            for signal in signals.forever() {
+                let control = if signal == SIGHUP {
+                    log::info!("reload requested");
+                    Control::Reload
+                } else {
+                    log::info!("stop requested");
+                    Control::Stop
+                };
+                if tx.send(control).is_err() {
+                    break;
+                }
+            }
+        })
+        .map_err(|e| format!("cannot start the signal thread: {e}"))?;
+    supervise(config_path, &rx)
+}
+
+/// Foreground run on Windows: Ctrl+C stops. The service reloads on `paramchange`.
+#[cfg(windows)]
+fn run(config_path: &Path) -> Result<(), String> {
+    let (tx, rx) = mpsc::channel();
     ctrlc::set_handler(move || {
         log::info!("stop requested");
-        handler_stop.stop();
+        let _ = tx.send(Control::Stop);
     })
     .map_err(|e| format!("cannot install the signal handler: {e}"))?;
-    agent.run(stop).map_err(|e| e.to_string())
+    supervise(config_path, &rx)
 }
 
 #[cfg(windows)]
@@ -246,12 +336,25 @@ fn run_service(_config_path: PathBuf) -> Result<(), String> {
 }
 
 fn check_config(config_path: &Path) -> Result<(), String> {
-    let config = load(config_path)?;
+    let config = AgentConfig::load(config_path).map_err(|e| {
+        let n = e.problems.len();
+        let s = if n == 1 { "" } else { "s" };
+        format!("configuration is invalid ({n} problem{s}):\n{e}")
+    })?;
+    for warning in &config.warnings {
+        out(&format!("warning: {warning}"));
+    }
     // Building the agent checks every rule type is supported on this OS.
-    build_agent(config.clone())?;
+    Agent::new(config.clone(), Arc::new(agent_core::StaticCredential(None)))
+        .map_err(|e| e.to_string())?;
     let enabled = config.rules.iter().filter(|r| r.enabled).count();
+    let presets = if config.presets.is_empty() {
+        "none".to_owned()
+    } else {
+        config.presets.join(", ")
+    };
     out(&format!(
-        "{}: OK\n  endpoint: {}\n  state_dir: {}\n  buffer: {} MiB\n  rules: {enabled} enabled, {} disabled",
+        "{}: OK\n  endpoint: {}\n  state_dir: {}\n  buffer: {} MiB\n  presets: {presets}\n  rules: {enabled} enabled, {} disabled",
         config_path.display(),
         config.endpoint_base(),
         config.state_dir.display(),
@@ -260,10 +363,15 @@ fn check_config(config_path: &Path) -> Result<(), String> {
     ));
     for rule in &config.rules {
         let disabled = if rule.enabled { "" } else { " disabled" };
+        let origin = rule
+            .origin
+            .as_ref()
+            .map(|o| format!(" from {o}"))
+            .unwrap_or_default();
         out(&format!(
-            "    {} ({:?}, {}){disabled}",
+            "    {} ({}, {}){disabled}{origin}",
             rule.id,
-            rule.kind,
+            rule.kind.name(),
             rule.source_type()
         ));
     }
@@ -404,6 +512,80 @@ mod tests {
         }
         let err = args(&["--bogus=secret-value"]).expect_err("unknown");
         assert_eq!(err, "unknown option --bogus");
+    }
+
+    fn config_with_rules(dir: &Path, ids: &[&str]) -> String {
+        let mut text = format!(
+            "[agent]\nendpoint = \"https://ingest.example.invalid\"\nstate_dir = {:?}\npresets = []\n",
+            dir.join("state")
+        );
+        for id in ids {
+            text.push_str(&format!(
+                "[[rule]]\nid = \"{id}\"\ntype = \"file\"\npaths = [{:?}]\n",
+                dir.join("logs").join(format!("{id}.log"))
+            ));
+        }
+        text
+    }
+
+    fn running_rules(dir: &Path) -> Vec<String> {
+        let Ok(text) = std::fs::read_to_string(dir.join("state").join(STATUS_FILE)) else {
+            return Vec::new();
+        };
+        let status: Value = serde_json::from_str(&text).unwrap_or_default();
+        status["collectors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c["rule_id"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    fn wait_for_rules(dir: &Path, want: &[&str]) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while running_rules(dir) != want {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "still running {:?}, want {want:?}",
+                running_rules(dir)
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn reload_applies_a_valid_config_and_keeps_the_last_good_one() {
+        let dir = std::env::temp_dir().join(format!("wt-cli-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Not in the config directory: rules may not read the agent's own directories.
+        std::fs::create_dir_all(dir.join("etc")).expect("mkdir");
+        std::fs::create_dir_all(dir.join("logs")).expect("mkdir");
+        let config = dir.join("etc").join("agent.toml");
+        std::fs::write(&config, config_with_rules(&dir, &["a"])).expect("write");
+
+        let (tx, rx) = mpsc::channel();
+        let supervisor = {
+            let config = config.clone();
+            thread::spawn(move || supervise(&config, &rx))
+        };
+        wait_for_rules(&dir, &["a"]);
+
+        std::fs::write(&config, config_with_rules(&dir, &["a", "b"])).expect("write");
+        tx.send(Control::Reload).expect("send");
+        wait_for_rules(&dir, &["a", "b"]);
+
+        // An invalid file is refused; the agent keeps running the last good configuration.
+        std::fs::remove_file(dir.join("state").join(STATUS_FILE)).expect("rm status");
+        std::fs::write(&config, "[[rule]]\nid = \"Bad Id\"\n").expect("write");
+        tx.send(Control::Reload).expect("send");
+        thread::sleep(Duration::from_millis(1500));
+        assert!(!supervisor.is_finished());
+        // status.json is rewritten every few seconds by the still-running agent.
+        wait_for_rules(&dir, &["a", "b"]);
+
+        tx.send(Control::Stop).expect("send");
+        supervisor.join().expect("join").expect("clean stop");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

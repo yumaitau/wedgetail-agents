@@ -1,0 +1,7 @@
+{"cef_version":"0","device_product":"Threat Manager","device_vendor":"Example","device_version":"1.0","extensions":{"dst":"198.51.100.20","spt":"1232","src":"192.0.2.10"},"name":"worm successfully stopped","severity":"10","signature_id":"100"}
+{"cef_version":"0","device_product":"Firewall","device_vendor":"Example","device_version":"2.3","extensions":{"act":"blocked","cs1":"deny all","cs1Label":"rule","dst":"198.51.100.20","msg":"Rule 12 matched: deny all","src":"192.0.2.10"},"name":"Blocked connection","severity":"5","signature_id":"4000"}
+{"cef_version":"0","device_product":"App|Pipe","device_vendor":"Example","device_version":"1.0","extensions":{"fname":"C:\\temp\\x.txt","msg":"equals = sign and backslash \\ and newline\nend"},"name":"Name with | pipe","severity":"3","signature_id":"sig\\1"}
+{"cef_version":"1","device_product":"Product","device_vendor":"Vendor","device_version":"1","name":"name","severity":"Low","signature_id":"id"}
+null
+null
+null

@@ -1,0 +1,7 @@
+{"level":"info","msg":"user login","user":"alice","src_ip":"192.0.2.10","latency_ms":12}
+{"nested":{"a":[1,2,{"b":null}]},"ok":true}
+  {"padded": "whitespace"}  
+not json
+[1,2,3]
+"string"
+{"truncated":

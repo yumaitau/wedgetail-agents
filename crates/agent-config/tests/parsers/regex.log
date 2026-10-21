@@ -1,0 +1,3 @@
+2026-10-21T08:00:00Z INFO [main] Server started on port 8080
+2026-10-21T08:00:01Z ERROR [worker-3] Payment declined for order 1001
+not matching

@@ -1,0 +1,8 @@
+{"app_name":"sshd","hostname":"web-01","message":"Accepted publickey for alice from 192.0.2.10 port 52113 ssh2","proc_id":"812","timestamp":"Oct 21 08:00:00"}
+{"app_name":"sudo","hostname":"web-01","message":"   alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update","timestamp":"Oct  1 08:00:00"}
+{"app_name":"su","facility":4,"hostname":"web-01","message":"pam_unix(su:session): session opened for user root","priority":38,"proc_id":"901","severity":6,"timestamp":"Oct 21 08:00:00"}
+{"app_name":"sshd","hostname":"web-01","message":"Failed password for invalid user admin from 203.0.113.5 port 4242 ssh2","proc_id":"812","timestamp":"2026-10-21T08:00:00.123456+00:00"}
+{"app_name":"kernel","hostname":"web-01","message":"[12345.678] usb 1-1: new device","timestamp":"2026-10-21T08:00:00Z"}
+{"hostname":"web-01","message":"last message repeated 3 times","timestamp":"Oct 21 08:00:00"}
+null
+null

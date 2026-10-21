@@ -1,19 +1,22 @@
 //! Running under the Windows Service Control Manager (`wedgetail-agent run --service`).
 //!
 //! The service is installed by the MSI as `WedgetailAgent`, running as `NT AUTHORITY\LocalService`.
-//! Stop and shutdown requests set the agent's stop flag; the agent drains and exits.
+//! Stop and shutdown requests set the agent's stop flag; the agent drains and exits. The
+//! `paramchange` control (`sc.exe control WedgetailAgent paramchange`) reloads the
+//! configuration; an invalid one is logged and the running one kept.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::time::Duration;
-
-use agent_core::Stop;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::{define_windows_service, service_dispatcher};
+
+use crate::Control;
 
 pub const SERVICE_NAME: &str = "WedgetailAgent";
 
@@ -44,7 +47,9 @@ fn status(state: ServiceState, exit: u32) -> ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: state,
         controls_accepted: if state == ServiceState::Running {
-            ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::SHUTDOWN
+                | ServiceControlAccept::PARAM_CHANGE
         } else {
             ServiceControlAccept::empty()
         },
@@ -56,11 +61,15 @@ fn status(state: ServiceState, exit: u32) -> ServiceStatus {
 }
 
 fn run_service() -> Result<(), String> {
-    let stop = Stop::new();
-    let handler_stop = stop.clone();
+    let (tx, rx) = mpsc::channel();
     let handle = service_control_handler::register(SERVICE_NAME, move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
-            handler_stop.stop();
+            let _ = tx.send(Control::Stop);
+            ServiceControlHandlerResult::NoError
+        }
+        ServiceControl::ParamChange => {
+            log::info!("reload requested");
+            let _ = tx.send(Control::Reload);
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -75,10 +84,7 @@ fn run_service() -> Result<(), String> {
         .get()
         .cloned()
         .unwrap_or_else(agent_config::paths::default_config_path);
-    let result = agent_config::AgentConfig::load(&config_path)
-        .map_err(|e| e.to_string())
-        .and_then(crate::build_agent)
-        .and_then(|agent| agent.run(stop).map_err(|e| e.to_string()));
+    let result = crate::supervise(&config_path, &rx);
     // ERROR_SERVICE_SPECIFIC_ERROR-style failure code so the SCM recovery actions restart us.
     let exit = if result.is_ok() { 0 } else { 1 };
     let _ = handle.set_service_status(status(ServiceState::Stopped, exit));

@@ -1,0 +1,7 @@
+{"latency_ms":12,"level":"info","msg":"user login","src_ip":"192.0.2.10","user":"alice"}
+{"nested":{"a":[1,2,{"b":null}]},"ok":true}
+{"padded":"whitespace"}
+null
+null
+null
+null

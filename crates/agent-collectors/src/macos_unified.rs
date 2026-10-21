@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
+use agent_config::LogLevel;
+
 use crate::{Checkpoint, MAX_LINE_BYTES, time};
 
 /// Window before the newest event in which hashes are kept for de-duplication.
@@ -208,6 +210,15 @@ impl Dedupe {
 }
 
 /// `log show --start` takes local-style `YYYY-MM-DD HH:MM:SS+0000`.
+/// `log show` flags that include messages down to `level` (`log stream` takes `--level`).
+pub fn show_level_flags(level: LogLevel) -> &'static [&'static str] {
+    match level {
+        LogLevel::Default => &[],
+        LogLevel::Info => &["--info"],
+        LogLevel::Debug => &["--info", "--debug"],
+    }
+}
+
 pub fn log_show_start(us: u64) -> String {
     let s = time::format_rfc3339_us(us);
     format!("{} {}+0000", &s[..10], &s[11..19])
@@ -221,7 +232,9 @@ mod collector {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use super::{Dedupe, log_show_start, parse_line};
+    use agent_config::LogLevel;
+
+    use super::{Dedupe, log_show_start, parse_line, show_level_flags};
     use crate::subprocess::LineProcess;
     use crate::{Batch, Checkpoint, Collector, CollectorError, EventTemplate, time};
 
@@ -231,16 +244,18 @@ mod collector {
     pub struct UnifiedLog {
         template: EventTemplate,
         predicate: Option<String>,
+        level: LogLevel,
         pub(crate) dedupe: Dedupe,
         stream: Option<LineProcess>,
         catch_up: Option<LineProcess>,
     }
 
     impl UnifiedLog {
-        pub fn new(template: EventTemplate, predicate: Option<String>) -> Self {
+        pub fn new(template: EventTemplate, predicate: Option<String>, level: LogLevel) -> Self {
             Self {
                 template,
                 predicate,
+                level,
                 dedupe: Dedupe::default(),
                 stream: None,
                 catch_up: None,
@@ -269,14 +284,17 @@ mod collector {
                 self.dedupe = Dedupe::from_checkpoint(checkpoint.as_ref());
             }
             // Stream first so nothing falls between the end of the catch-up and the stream.
-            self.stream = Some(LineProcess::spawn(
-                self.command(&["stream", "--level", "info"]),
-            )?);
+            self.stream = Some(LineProcess::spawn(self.command(&[
+                "stream",
+                "--level",
+                self.level.name(),
+            ]))?);
             if let Some(from) = self.dedupe.catch_up_from(time::now_us()) {
                 let start = log_show_start(from);
-                self.catch_up = Some(LineProcess::spawn(
-                    self.command(&["show", "--info", "--start", &start]),
-                )?);
+                let mut args = vec!["show"];
+                args.extend(show_level_flags(self.level));
+                args.extend(["--start", &start]);
+                self.catch_up = Some(LineProcess::spawn(self.command(&args))?);
                 self.dedupe.catching_up = true;
             }
             Ok(())
@@ -333,6 +351,13 @@ mod collector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn level_flags() {
+        assert!(show_level_flags(LogLevel::Default).is_empty());
+        assert_eq!(show_level_flags(LogLevel::Info), ["--info"]);
+        assert_eq!(show_level_flags(LogLevel::Debug), ["--info", "--debug"]);
+    }
 
     const LINE: &str = r#"{"timezoneName":"","messageType":"Default","eventType":"logEvent","source":null,"formatString":"%s","userID":0,"activityIdentifier":0,"subsystem":"com.apple.Authorization","category":"authd","threadID":5434,"bootUUID":"","processImagePath":"\/System\/Library\/Frameworks\/Security.framework\/Versions\/A\/MachServices\/authd.xpc\/Contents\/MacOS\/authd","senderImagePath":"\/System\/Library\/Frameworks\/Security.framework\/Versions\/A\/Security","timestamp":"2026-10-21 19:00:00.123456+1100","machTimestamp":113743864720729,"eventMessage":"Succeeded authorizing right 'system.login.console'","traceID":1092473043961512196,"processID":623,"parentActivityIdentifier":0}"#;
 
@@ -463,6 +488,8 @@ mod os_tests {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    use agent_config::LogLevel;
+
     use super::UnifiedLog;
     use crate::{Collector, EventTemplate};
 
@@ -488,7 +515,7 @@ mod os_tests {
         let token = format!("wt-test-{}-{}", std::process::id(), crate::time::now_us());
         let template = EventTemplate::new("t", "macos.unified", None, &BTreeMap::new());
         let predicate = format!("eventMessage CONTAINS \"{token}\"");
-        let mut c = UnifiedLog::new(template.clone(), Some(predicate.clone()));
+        let mut c = UnifiedLog::new(template.clone(), Some(predicate.clone()), LogLevel::Info);
         c.start(None).expect("start");
         std::thread::sleep(Duration::from_secs(2));
         let logger = |m: &str| {
@@ -506,7 +533,7 @@ mod os_tests {
         // Logged while stopped: found by the catch-up read, and "one" is not repeated.
         logger(&format!("{token} two"));
         std::thread::sleep(Duration::from_secs(1));
-        let mut c = UnifiedLog::new(template, Some(predicate));
+        let mut c = UnifiedLog::new(template, Some(predicate), LogLevel::Info);
         c.start(Some(checkpoint)).expect("restart");
         let got = collect_until(&mut c, &token, 1, 20);
         let more = collect_until(&mut c, &token, 1, 3);

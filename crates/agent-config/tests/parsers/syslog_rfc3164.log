@@ -1,0 +1,8 @@
+Oct 21 08:00:00 web-01 sshd[812]: Accepted publickey for alice from 192.0.2.10 port 52113 ssh2
+Oct  1 08:00:00 web-01 sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update
+<38>Oct 21 08:00:00 web-01 su[901]: pam_unix(su:session): session opened for user root
+2026-10-21T08:00:00.123456+00:00 web-01 sshd[812]: Failed password for invalid user admin from 203.0.113.5 port 4242 ssh2
+2026-10-21T08:00:00Z web-01 kernel: [12345.678] usb 1-1: new device
+Oct 21 08:00:00 web-01 last message repeated 3 times
+<999>Oct 21 08:00:00 web-01 x: bad pri
+not syslog at all

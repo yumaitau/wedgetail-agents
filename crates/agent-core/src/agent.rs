@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use agent_collectors::{Batch, Checkpoint, Collector, RawEvent};
+use agent_collectors::{Batch, Checkpoint, Collector, CollectorEnv, RawEvent};
 use agent_config::AgentConfig;
 
 use crate::backoff::Backoff;
@@ -25,7 +25,8 @@ use crate::checkpoints::CheckpointStore;
 use crate::credential::{CredentialProvider, CredentialStore};
 use crate::enrolment::{RotationOptions, Rotator};
 use crate::host::HostInfo;
-use crate::processor::{PassThrough, Processor, Verdict};
+use crate::processor::{Processor, Verdict};
+use crate::rules::RuleProcessor;
 use crate::shipper::{Shipper, ShipperOptions};
 use crate::stop::Stop;
 use crate::telemetry::{self, BufferStats, Metrics};
@@ -76,26 +77,30 @@ impl fmt::Debug for Agent {
 }
 
 impl Agent {
-    /// Build the collectors for every enabled rule. Fails if a rule's type is not supported on
-    /// this OS.
+    /// Build the collectors for every enabled rule, and the rule pipeline (filters, sampling,
+    /// rate limits, redaction, parsers) as the processor. Fails if a rule's type is not
+    /// supported on this OS.
     pub fn new(
         config: AgentConfig,
         credential: Arc<dyn CredentialProvider>,
     ) -> Result<Self, AgentError> {
+        let env = CollectorEnv::for_config(&config);
         let mut collectors = Vec::new();
         for rule in config.rules.iter().filter(|r| r.enabled) {
-            collectors.push(agent_collectors::from_rule(rule).map_err(|e| AgentError(e.0))?);
+            collectors.push(agent_collectors::from_rule(rule, &env).map_err(|e| AgentError(e.0))?);
         }
+        let processor = RuleProcessor::new(&config.rules).map_err(AgentError)?;
+        let presets = config.presets.clone();
         let mut shipper_options = ShipperOptions::new(config.endpoint_base());
         shipper_options.limits = BatchLimits::from(&config.limits);
         shipper_options.max_requests_per_minute = config.limits.max_requests_per_minute;
         Ok(Self {
             config,
             collectors,
-            processor: Box::new(PassThrough),
+            processor: Box::new(processor),
             credential,
             host: HostInfo::detect(),
-            presets: Vec::new(),
+            presets,
             shipper_options,
             rotation: None,
         })
@@ -112,7 +117,8 @@ impl Agent {
         self
     }
 
-    /// Install the redaction/filter hook that runs before events reach the disk buffer.
+    /// Replace the rule pipeline that runs before events reach the disk buffer (tests, custom
+    /// pipelines). The replacement is then responsible for redaction.
     pub fn with_processor(mut self, processor: Box<dyn Processor>) -> Self {
         self.processor = processor;
         self
@@ -309,6 +315,7 @@ fn process(
             }
             Verdict::Filtered => {}
             Verdict::Sampled => Metrics::add(&metrics.dropped_sampled, 1),
+            Verdict::RateLimited => Metrics::add(&metrics.dropped_rate_limited, 1),
         }
     }
     lines
@@ -402,6 +409,7 @@ fn collect(
 mod tests {
     use std::collections::BTreeMap;
     use std::io::Write;
+    use std::path::Path;
 
     use agent_collectors::EventTemplate;
     use serde_json::Value;
@@ -411,35 +419,46 @@ mod tests {
     use crate::credential::{Secret, StaticCredential};
     use crate::shipper::test_server::Server;
 
-    /// Replaces any `password=...` value: stands in for the redaction rules of a later ticket.
-    struct Redact;
-
-    impl Processor for Redact {
-        fn process(&mut self, mut event: RawEvent) -> Verdict {
-            if let Some(body) = &mut event.body
-                && let Some(i) = body.find("password=")
-            {
-                body.replace_range(i + 9.., "[REDACTED]");
-            }
-            if event.body.as_deref() == Some("drop me") {
-                return Verdict::Filtered;
-            }
-            Verdict::Keep(event)
-        }
-    }
-
     #[test]
     fn end_to_end_file_to_server_with_redaction_before_disk() {
         let dir = TempDir::new("agent-e2e");
         std::fs::create_dir_all(&dir.0).expect("mkdir");
         let log_path = dir.0.join("app.log");
-        std::fs::write(&log_path, "").expect("create");
+        let noisy_path = dir.0.join("noisy.log");
+        let sampled_path = dir.0.join("sampled.log");
+        for p in [&log_path, &noisy_path, &sampled_path] {
+            std::fs::write(p, "").expect("create");
+        }
         let server = Server::start(vec![]);
+        // Redaction, filtering, rate limiting and sampling all come from the rules.
         let config = AgentConfig::parse(&format!(
-            "endpoint = \"{}\"\nstate_dir = {:?}\n[[rule]]\nid = \"app\"\ntype = \"file\"\npaths = [{:?}]\nsource_label = \"web/app\"\n",
+            r#"[agent]
+endpoint = "{}"
+state_dir = {:?}
+[[rule]]
+id = "app"
+type = "file"
+paths = [{:?}]
+source_label = "web/app"
+exclude_match = ['^drop me$']
+redact = [{{ pattern = 'password=\S+', replace = "password=[REDACTED]" }}]
+parser = "logfmt"
+[[rule]]
+id = "noisy"
+type = "file"
+paths = [{:?}]
+rate_limit = {{ events_per_second = 1, burst = 2 }}
+[[rule]]
+id = "sampled"
+type = "file"
+paths = [{:?}]
+sample_rate = 0.000000001
+"#,
             server.url,
             dir.0.join("state"),
-            log_path
+            log_path,
+            noisy_path,
+            sampled_path,
         ))
         .expect("config");
         let cred = Arc::new(StaticCredential(Some(Secret::new(
@@ -449,7 +468,6 @@ mod tests {
         opts.flush_interval = Duration::from_millis(100);
         let agent = Agent::new(config, cred)
             .expect("agent")
-            .with_processor(Box::new(Redact))
             .with_shipper_options(opts);
         let stop = Stop::new();
         let runner = {
@@ -458,14 +476,25 @@ mod tests {
         };
 
         thread::sleep(Duration::from_millis(500));
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path)
-            .expect("open");
-        writeln!(f, "login user=alice password=hunter2").expect("write");
-        writeln!(f, "drop me").expect("write");
-        writeln!(f, "second line").expect("write");
-        drop(f);
+        let append = |path: &Path, lines: &[&str]| {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(path)
+                .expect("open");
+            for line in lines {
+                writeln!(f, "{line}").expect("write");
+            }
+        };
+        append(
+            &log_path,
+            &[
+                "login user=alice password=hunter2",
+                "drop me",
+                "second line",
+            ],
+        );
+        append(&noisy_path, &["noise"; 10]);
+        append(&sampled_path, &["sample"; 20]);
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let lines = loop {
@@ -478,7 +507,7 @@ mod tests {
                         .map(|l| serde_json::from_str(l).expect("json"))
                 })
                 .collect();
-            if lines.iter().filter(|l| l["source_type"] == "file").count() >= 2
+            if lines.iter().filter(|l| l["source_type"] == "file").count() >= 4
                 || Instant::now() > deadline
             {
                 break lines;
@@ -488,15 +517,16 @@ mod tests {
         stop.stop();
         runner.join().expect("join").expect("run");
 
-        let files: Vec<&Value> = lines
-            .iter()
-            .filter(|l| l["source_type"] == "file")
-            .collect();
-        assert_eq!(files.len(), 2, "{lines:?}");
-        assert_eq!(files[0]["body"], "login user=alice password=[REDACTED]");
-        assert_eq!(files[0]["rule_id"], "app");
-        assert_eq!(files[0]["attrs"]["source_label"], "web/app");
-        assert_eq!(files[1]["body"], "second line");
+        let app: Vec<&Value> = lines.iter().filter(|l| l["rule_id"] == "app").collect();
+        assert_eq!(app.len(), 2, "{lines:?}");
+        assert_eq!(app[0]["body"], "login user=alice password=[REDACTED]");
+        assert_eq!(app[0]["fields"]["user"], "alice");
+        assert_eq!(app[0]["fields"]["password"], "[REDACTED]");
+        assert_eq!(app[0]["attrs"]["source_label"], "web/app");
+        assert_eq!(app[1]["body"], "second line");
+        let noisy = lines.iter().filter(|l| l["rule_id"] == "noisy").count();
+        assert!((2..=3).contains(&noisy), "{noisy}");
+        assert!(!lines.iter().any(|l| l["rule_id"] == "sampled"));
         assert!(lines.iter().any(|l| l["source_type"] == "agent.heartbeat"));
 
         // The secret never reached the disk buffer.
@@ -504,11 +534,46 @@ mod tests {
             let bytes = std::fs::read(entry.expect("entry").path()).expect("read");
             assert!(!bytes.windows(7).any(|w| w == b"hunter2"));
         }
+        // Drops are counted in the heartbeat fields (status.json carries the same fields).
         let status: Value = serde_json::from_slice(
             &std::fs::read(dir.0.join("state/status.json")).expect("status"),
         )
         .expect("json");
         assert_eq!(status["collectors"][0]["rule_id"], "app");
+        assert_eq!(status["dropped"]["sampled"], 20);
+        assert_eq!(status["dropped"]["rate_limited"], 10 - noisy);
+    }
+
+    #[test]
+    fn rule_drops_are_counted_in_the_heartbeat() {
+        let config = AgentConfig::parse(
+            "[agent]\nendpoint = \"https://ingest.example.com\"\n[[rule]]\nid = \"r\"\ntype = \"journald\"\nsample_rate = 0.5\nrate_limit = { events_per_second = 1, burst = 3 }\n",
+        )
+        .expect("config");
+        let mut processor = RuleProcessor::new(&config.rules)
+            .expect("processor")
+            .with_seed(1);
+        let template = EventTemplate::new("r", "journald", None, &BTreeMap::new());
+        let events = (0..100)
+            .map(|_| template.event(1, None, serde_json::Map::new()))
+            .collect();
+        let metrics = Metrics::default();
+        let lines = process(events, &mut processor, 1 << 20, &metrics);
+        assert_eq!(lines.len(), 3);
+        let fields = telemetry::heartbeat_fields(
+            &HostInfo::detect(),
+            Instant::now(),
+            BufferStats::default(),
+            &metrics,
+            &[],
+        );
+        let sampled = fields["dropped"]["sampled"].as_u64().expect("sampled");
+        let limited = fields["dropped"]["rate_limited"].as_u64().expect("limited");
+        assert!(sampled > 20 && limited > 20, "{fields:?}");
+        assert_eq!(sampled + limited + 3, 100);
+        let event = telemetry::heartbeat_event(fields);
+        let line: Value = serde_json::from_slice(&event.to_wire_line()).expect("json");
+        assert_eq!(line["fields"]["dropped"]["rate_limited"], limited);
     }
 
     /// A collector that fails on start a few times, then produces one event.

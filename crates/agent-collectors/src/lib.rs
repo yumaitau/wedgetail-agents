@@ -7,7 +7,8 @@
 //! events after the last saved checkpoint.
 //!
 //! [`from_rule`] maps a configured rule to its collector. A new collector type is a new
-//! [`agent_config::RuleKind`] variant plus one arm there.
+//! [`agent_config::RuleKind`] variant plus one arm there. [`CollectorEnv`] carries what rules
+//! share: the open file cap and the directories no rule may read.
 
 // Only the OS FFI modules under `os/` may use `unsafe`, and each block carries a SAFETY note.
 #![deny(unsafe_code)]
@@ -32,6 +33,7 @@ pub mod wineventlog;
 mod os;
 
 pub use event::{Checkpoint, EventTemplate, FilePosition, RawEvent, WIRE_VERSION};
+pub use file_tail::{CollectorEnv, FileSpec, OpenFiles};
 
 /// Longest line or message a collector keeps; the rest is cut and `attrs.truncated` is set.
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
@@ -78,23 +80,29 @@ impl From<std::io::Error> for CollectorError {
 }
 
 /// Build the collector for `rule`. Fails for rule types this OS does not support.
-pub fn from_rule(rule: &Rule) -> Result<Box<dyn Collector>, CollectorError> {
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    allow(unused_variables)
+)]
+pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, CollectorError> {
     let template = EventTemplate::from_rule(rule);
     match rule.kind {
         RuleKind::File => Ok(Box::new(file_tail::FileTail::new(
             template,
-            rule.paths.clone(),
-            rule.start_at,
-        ))),
+            FileSpec::from_rule(rule),
+            env.clone(),
+        )?)),
         #[cfg(target_os = "linux")]
         RuleKind::Journald => Ok(Box::new(journald::Journald::new(
             template,
-            rule.matches.clone(),
+            rule.journal_matches(),
+            rule.priority_max,
         ))),
         #[cfg(target_os = "macos")]
         RuleKind::MacosUnified => Ok(Box::new(macos_unified::UnifiedLog::new(
             template,
             rule.predicate.clone(),
+            rule.level.unwrap_or_default(),
         ))),
         #[cfg(windows)]
         RuleKind::Wineventlog => {

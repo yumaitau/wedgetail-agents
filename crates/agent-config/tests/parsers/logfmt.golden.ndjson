@@ -1,0 +1,6 @@
+{"duration":"12ms","level":"info","msg":"user logged in","src_ip":"192.0.2.10","user":"alice"}
+{"level":"error","msg":"quoted \"inner\" and \\ backslash\nnewline","ok":true,"ts":"2026-10-21T08:00:00Z"}
+{"empty":"","key":""}
+null
+null
+{"just":true,"some":true,"words":true}

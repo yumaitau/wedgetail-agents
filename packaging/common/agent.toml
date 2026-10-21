@@ -1,4 +1,5 @@
-# Wedgetail agent configuration.
+# Wedgetail agent configuration (schema version 1). Every setting and rule field is described
+# in docs/rules.md: https://github.com/yumaitau/wedgetail-agents/blob/main/docs/rules.md
 #
 # Locations:
 #   Linux    /etc/wedgetail-agent/agent.toml           (+ rules.d/*.toml)
@@ -6,42 +7,55 @@
 #   Windows  %ProgramData%\Wedgetail\agent.toml
 #
 # Check it with:  wedgetail-agent check-config
+# Reload it with: systemctl reload wedgetail-agent (Linux), sudo launchctl kill HUP
+#                 system/au.com.yumait.wedgetail-agent (macOS), sc.exe control WedgetailAgent
+#                 paramchange (Windows). An invalid file is reported and the running one kept.
 # The agent does not start until `endpoint` is set.
 
+schema_version = 1
+
+[agent]
 # Your Wedgetail ingest URL (https only), from the Wedgetail console.
 # endpoint = "https://<your ingest URL>"
 
-# state_dir defaults to /var/lib/wedgetail-agent, /Library/Application Support/Wedgetail/state
-# or %ProgramData%\Wedgetail\state.
-
-[buffer]
 # Disk buffer cap in MiB. When full, the oldest unsent events are dropped and counted.
-max_mb = 256
+buffer_max_mb = 256
+
+# Built-in presets: "auto" picks the ones for this host. List ids to choose, [] for none.
+presets = ["auto"]
+# Switch off single rules, from presets or rule files, by id.
+# disable_rules = ["linux-core.kernel"]
+
+# state_dir defaults to /var/lib/wedgetail-agent, /Library/Application Support/Wedgetail/state
+# or %ProgramData%\Wedgetail\state. max_open_files (default 1000) caps files tailed at once.
 
 # [limits] defaults are the server limits (1 MiB gzip, 5,000 records, 120 requests a minute)
 # and can only be lowered.
 
-# Collector rules. Presets and more rule types arrive in later releases.
+# Your own rules. They can also live in rules.d/*.toml, read in file name order.
 #
 # [[rule]]
-# id = "nginx.access"
+# id = "nginx-access"
 # type = "file"
-# paths = ["/var/log/nginx/access.log"]
+# paths = ["/var/log/nginx/*.log"]
+# exclude = ["*.gz"]
+# parser = "nginx_combined"
 # source_label = "web/nginx"
 # tags = { env = "prod" }
+# redact = [{ pattern = 'password=\S+', replace = "password=[REDACTED]" }]
 #
 # [[rule]]
 # id = "ssh"
 # type = "journald"
-# matches = ["_SYSTEMD_UNIT=ssh.service"]
+# units = ["ssh.service"]
 #
 # [[rule]]
-# id = "security"
+# id = "win-rdp"
 # type = "wineventlog"
-# channel = "Security"
-# event_ids = [4624, 4625, 4720]
+# channel = "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational"
+# event_ids = [1149]
 #
 # [[rule]]
-# id = "macos.auth"
+# id = "mac-ssh"
 # type = "macos_unified"
-# predicate = 'subsystem == "com.apple.Authorization"'
+# predicate = 'process == "sshd"'

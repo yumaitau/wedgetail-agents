@@ -1,5 +1,6 @@
-//! The hook between collectors and the disk buffer. Redaction, filtering and sampling rules
-//! implement [`Processor`]; it runs before an event is written to disk, so a redacted secret
+//! The hook between collectors and the disk buffer. The rule pipeline
+//! ([`crate::rules::RuleProcessor`]: filtering, sampling, rate limiting, redaction, parsing)
+//! implements [`Processor`]; it runs before an event is written to disk, so a redacted secret
 //! never reaches the buffer.
 
 use agent_collectors::RawEvent;
@@ -13,6 +14,8 @@ pub enum Verdict {
     Filtered,
     /// Drop it by sampling; counted in the heartbeat's `dropped.sampled`.
     Sampled,
+    /// Drop it for a rule's rate limit; counted in the heartbeat's `dropped.rate_limited`.
+    RateLimited,
 }
 
 pub trait Processor: Send {
