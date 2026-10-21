@@ -218,7 +218,9 @@ Audit mode (8003, 8006, 8021, 8024, 3034, 3076) and enforced blocks (8004, 8007,
 ISM-1660 asks for allowed **and** blocked application control events to be centrally logged.
 `windows-app-control` gives the blocked and audit half on every host; add
 `windows-app-control-allowed` to `presets` on hosts where you need the allowed half as
-evidence:
+evidence. It covers EXE, DLL, MSI and script rules only: on hosts whose AppLocker policy also
+has packaged app rules, add your own rules for 8020 and 8023 (below) to complete the allowed
+half.
 
 ```toml
 [agent]
@@ -227,12 +229,26 @@ presets = ["auto", "windows-app-control-allowed"]
 
 It is opt-in because of volume: AppLocker writes one 8002 event for every allowed program
 start (roughly the rate of 4688 process creation), and when DLL rules are enforced one for
-every DLL load, which can be thousands an hour per workstation. Turn on one rule only with
-`disable_rules = ["windows-app-control-allowed.applocker-exe"]` (scripts and MSI only) if the
-EXE and DLL volume is too high. Allowed packaged apps (8020, 8023) and App Control for
+every DLL load, which can be thousands an hour per workstation. If the EXE and DLL volume is
+too high, keep only the MSI and script rule with
+`disable_rules = ["windows-app-control-allowed.applocker-exe"]`. Allowed packaged apps (8020, 8023) and App Control for
 Business allowed events are not collected: App Control does not log allowed files by
-default, and AppLocker writes 8020/8023 for every packaged app start and install; add your own
-rule if you need them.
+default, and AppLocker writes 8020/8023 for every packaged app start and install. Where
+packaged app rules are part of the policy, collect them with your own rules:
+
+```toml
+[[rule]]
+id = "site-applocker-packaged-execution-allowed"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Execution"
+event_ids = [8020]
+
+[[rule]]
+id = "site-applocker-packaged-deployment-allowed"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Deployment"
+event_ids = [8023]
+```
 
 ## How events are collected
 
