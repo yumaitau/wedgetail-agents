@@ -1,0 +1,8 @@
+Oct 21 08:00:01 db-01 sshd[1810]: Accepted password for deploy from 198.51.100.20 port 50422 ssh2
+Oct 21 08:00:01 db-01 sshd[1810]: pam_unix(sshd:session): session opened for user deploy(uid=1002) by deploy(uid=0)
+Oct 21 08:00:05 db-01 sshd[1822]: Failed publickey for root from 203.0.113.60 port 33012 ssh2: RSA SHA256:3n0Q2l4dYvN0YhJ0b0mBq4xk3lVt8kLwq3wq0yHq9aE
+Oct 21 08:00:06 db-01 sshd[1822]: Connection closed by authenticating user root 203.0.113.60 port 33012 [preauth]
+Oct 21 08:01:00 db-01 sudo[1900]:   deploy : TTY=pts/0 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/dnf install -y tcpdump
+Oct 21 08:01:30 db-01 su[1910]: pam_unix(su-l:auth): authentication failure; logname=deploy uid=1002 euid=0 tty=pts/0 ruser=deploy rhost=  user=root
+Oct 21 08:01:45 db-01 useradd[1920]: new user: name=svc-backup, UID=990, GID=990, home=/var/lib/svc-backup, shell=/sbin/nologin, from=/dev/pts/0
+Oct 21 08:02:00 db-01 sshd[1810]: pam_unix(sshd:session): session closed for user deploy

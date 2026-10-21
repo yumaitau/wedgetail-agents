@@ -22,6 +22,7 @@ use serde::{Deserialize, Deserializer};
 use toml::Spanned;
 
 pub mod compile;
+pub mod linux;
 pub mod multiline;
 pub mod parsers;
 pub mod paths;
@@ -275,6 +276,32 @@ impl ParserKind {
     }
 }
 
+/// How a `file` rule turns the bytes of a file into events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFormat {
+    /// Text lines (default), joined by `multiline` and parsed by `parser`.
+    #[default]
+    Lines,
+    /// The Linux audit log: records with the same serial are merged into one event.
+    Auditd,
+    /// Binary login records (`/var/log/wtmp`, `/var/log/btmp`), glibc layout.
+    Utmp,
+    /// Binary `/var/log/lastlog`, sent as a periodic summary rather than raw records.
+    Lastlog,
+}
+
+impl FileFormat {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Lines => "lines",
+            Self::Auditd => "auditd",
+            Self::Utmp => "utmp",
+            Self::Lastlog => "lastlog",
+        }
+    }
+}
+
 /// Which side of a matching line the continuation lines join.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -421,6 +448,10 @@ pub struct Rule {
     /// `file`: absolute paths or glob patterns (`*`, `?`, `[a-z]`, `**`).
     #[serde(default)]
     pub paths: Vec<PathBuf>,
+    /// `file`: `lines` (default), `auditd` (audit records merged per event), `utmp` (binary
+    /// wtmp/btmp records) or `lastlog` (binary lastlog, summarised).
+    #[serde(default)]
+    pub format: FileFormat,
     /// `file`: glob patterns of files to skip. A pattern with a path separator is matched
     /// against the whole path, otherwise against the file name.
     #[serde(default)]
@@ -828,11 +859,14 @@ impl AgentConfig {
         }
         config.warnings.extend(selected.warnings);
         let mut rules = Vec::new();
+        // Built-in preset rules for a source this host does not have (another distribution's
+        // log file, the journal on a host without systemd) are loaded switched off.
+        let host_checks = std::ptr::eq(registry, presets::BUILTIN) && os == std::env::consts::OS;
         for preset in &selected.presets {
             let origin = PathBuf::from(format!("preset:{}", preset.id));
             if let Some(mut file) = parse_file(&origin, preset.toml, &mut problems) {
                 reject_settings(&file, &origin, preset.toml, &mut problems);
-                for rule in take_rules(&mut file, &origin, preset.toml) {
+                for mut rule in take_rules(&mut file, &origin, preset.toml) {
                     if !rule.id.starts_with(&format!("{}.", preset.id)) {
                         problems.at(
                             Some(&origin),
@@ -843,6 +877,9 @@ impl AgentConfig {
                             ),
                         );
                     }
+                    if host_checks && !presets::rule_check_passes(&rule.id) {
+                        rule.enabled = false;
+                    }
                     rules.push(rule);
                 }
             }
@@ -852,11 +889,17 @@ impl AgentConfig {
         rules.append(&mut user_rules);
         config.rules = rules;
 
-        // disable_rules switches rules off. Ids that match nothing are only a warning: a file
-        // shared between hosts may name preset rules this host does not load.
+        // disable_rules switches rules off, with every rule under the id (`linux-core.auth`
+        // also switches off `linux-core.auth.journald`). Ids that match nothing are only a
+        // warning: a file shared between hosts may name preset rules this host does not load.
         for id in &config.disable_rules {
             let mut found = false;
-            for rule in config.rules.iter_mut().filter(|r| &r.id == id) {
+            let prefix = format!("{id}.");
+            for rule in config
+                .rules
+                .iter_mut()
+                .filter(|r| &r.id == id || r.id.starts_with(&prefix))
+            {
                 rule.enabled = false;
                 found = true;
             }

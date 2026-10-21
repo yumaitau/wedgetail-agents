@@ -437,3 +437,138 @@ fn from_rule_builds_a_file_tail() {
     assert!(spec.multiline.is_some());
     assert!(crate::from_rule(&rule, &CollectorEnv::default()).is_ok());
 }
+
+fn format_spec(path: &Path, format: FileFormat) -> FileSpec {
+    let mut spec = FileSpec::new(vec![path.to_path_buf()], StartAt::Beginning);
+    spec.format = format;
+    spec
+}
+
+#[test]
+fn auditd_format_merges_records_and_checkpoints_pending_events() {
+    let dir = Dir::new("auditd");
+    let path = dir.0.join("audit.log");
+    let first = "type=SYSCALL msg=audit(1792569600.123:10): syscall=59 comm=\"id\"\ntype=PROCTITLE msg=audit(1792569600.123:10): proctitle=6964\n";
+    append(
+        &path,
+        &format!(
+            "{first}type=SYSCALL msg=audit(1792569600.200:11): syscall=2\ntype=EOE msg=audit(1792569600.123:10): \n"
+        ),
+    );
+    let spec = format_spec(&path, FileFormat::Auditd);
+    let mut t = tail_spec(spec.clone(), CollectorEnv::default());
+    t.start(None).expect("start");
+    let batch = t.poll(100, Duration::ZERO).expect("poll");
+    assert_eq!(batch.events.len(), 1);
+    let ev = &batch.events[0];
+    assert_eq!(ev.ts_us, 1_792_569_600_123_000);
+    assert!(ev.body.is_none());
+    assert_eq!(ev.fields["serial"], 10);
+    assert_eq!(ev.fields["records"][1]["proctitle"], "id");
+    assert_eq!(
+        ev.attrs["path"],
+        Value::from(path.to_string_lossy().as_ref())
+    );
+    // Serial 11 is still open: the checkpoint is at its first record.
+    let cp = batch.checkpoint.expect("checkpoint");
+    match &cp {
+        Checkpoint::File { files } => assert_eq!(files[&path].offset, first.len() as u64),
+        other => panic!("{other:?}"),
+    }
+    // After a restart it is read again and finished by its EOE.
+    drop(t);
+    append(&path, "type=EOE msg=audit(1792569600.200:11): \n");
+    let mut t = tail_spec(spec, CollectorEnv::default());
+    t.start(Some(cp)).expect("start");
+    let batch = t.poll(100, Duration::ZERO).expect("poll");
+    let serials: Vec<_> = batch
+        .events
+        .iter()
+        .map(|e| e.fields["serial"].clone())
+        .collect();
+    // Serial 10's EOE is read again without its records and ignored: 10 is not sent twice.
+    assert_eq!(serials, [11]);
+}
+
+#[test]
+fn utmp_format_reads_whole_records() {
+    let dir = Dir::new("utmp");
+    let path = dir.0.join("wtmp");
+    let rec = |user: &str, sec: i32| {
+        let mut r = vec![0u8; 384];
+        r[0..2].copy_from_slice(&7i16.to_le_bytes());
+        r[44..44 + user.len()].copy_from_slice(user.as_bytes());
+        r[340..344].copy_from_slice(&sec.to_le_bytes());
+        r
+    };
+    let mut data = rec("alice", 1_792_569_600);
+    data.extend(rec("bob", 1_792_569_660));
+    let third = rec("carol", 1_792_569_720);
+    data.extend_from_slice(&third[..100]);
+    std::fs::write(&path, &data).expect("write");
+
+    // start_at = "end" on a file that is not a whole number of records starts at a boundary.
+    let mut end = FileSpec::new(vec![path.clone()], StartAt::End);
+    end.format = FileFormat::Utmp;
+    end.utmp_layout = utmp::Layout::X86_64;
+    let mut t = tail_spec(end, CollectorEnv::default());
+    t.start(None).expect("start");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(&third[100..]))
+        .expect("append");
+    let users: Vec<_> = t
+        .poll(100, Duration::ZERO)
+        .expect("poll")
+        .events
+        .iter()
+        .map(|e| e.fields["user"].clone())
+        .collect();
+    assert_eq!(users, ["carol"]);
+
+    let mut spec = format_spec(&path, FileFormat::Utmp);
+    spec.utmp_layout = utmp::Layout::X86_64;
+    let mut t = tail_spec(spec, CollectorEnv::default());
+    t.start(None).expect("start");
+    let batch = t.poll(100, Duration::ZERO).expect("poll");
+    let got: Vec<_> = batch
+        .events
+        .iter()
+        .map(|e| {
+            (
+                e.fields["user"].clone(),
+                e.fields["log"].clone(),
+                e.ts_us,
+                e.body.is_none(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                Value::from("alice"),
+                Value::from("wtmp"),
+                1_792_569_600_000_000,
+                true
+            ),
+            (
+                Value::from("bob"),
+                Value::from("wtmp"),
+                1_792_569_660_000_000,
+                true
+            ),
+            (
+                Value::from("carol"),
+                Value::from("wtmp"),
+                1_792_569_720_000_000,
+                true
+            ),
+        ]
+    );
+    match batch.checkpoint.expect("checkpoint") {
+        Checkpoint::File { files } => assert_eq!(files[&path].offset, 3 * 384),
+        other => panic!("{other:?}"),
+    }
+}

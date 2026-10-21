@@ -139,6 +139,10 @@ pub enum Checkpoint {
         ts: String,
         seen: Vec<String>,
     },
+    /// lastlog summary: the file modification time (microseconds) last summarised.
+    Lastlog {
+        mtime_us: u64,
+    },
 }
 
 #[cfg(test)]
@@ -178,6 +182,7 @@ mod tests {
                 ts: "2026-10-21T08:00:00.000000Z".into(),
                 seen: vec!["ab".into()],
             },
+            Checkpoint::Lastlog { mtime_us: 1 },
         ];
         for cp in cps {
             let json = serde_json::to_string(&cp).expect("ser");

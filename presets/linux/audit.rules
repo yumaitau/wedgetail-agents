@@ -1,0 +1,114 @@
+## Wedgetail recommended Linux audit rules (for the linux-auditd preset)
+##
+## The agent never installs, loads or changes audit rules: this file is for you to review and
+## install, opt in. Based on public baselines, reduced to what Wedgetail detections use:
+##   - Florian Roth (Neo23x0), "auditd" best-practice configuration:
+##     https://github.com/Neo23x0/auditd/blob/master/audit.rules
+##   - CIS Benchmarks for Linux (Ubuntu, Debian, RHEL, Amazon Linux), "Configure auditd rules"
+##     (identity, sudoers, login records, time, mounts, kernel modules, audit configuration):
+##     https://www.cisecurity.org/cis-benchmarks
+##
+## CPU WARNING: the execve rules at the end log every program started on the host. On busy
+## build servers, CI runners and container hosts that is thousands of events a second and can
+## cost several percent of CPU in auditd and the kernel, plus disk and ingest volume. Measure on
+## one host first; remove the "exec" rules, or narrow them (for example add -F auid>=1000
+## -F auid!=unset to log only interactive users), if the cost is too high.
+##
+## Install (as root):
+##   install -m 0640 audit.rules /etc/audit/rules.d/50-wedgetail.rules
+##   augenrules --check && augenrules --load
+##   auditctl -l | head          # the rules are active
+## Remove: delete /etc/audit/rules.d/50-wedgetail.rules and run augenrules --load.
+## If another rules file in /etc/audit/rules.d already sets -D, -b or -f, drop those lines here.
+## Every rule has a key (-k) that appears as `key` in the SYSCALL record of linux.auditd events.
+
+## Start clean, with a buffer large enough for bursts. Failure mode 1 logs lost events
+## (printk) rather than panicking the host.
+-D
+-b 8192
+--backlog_wait_time 60000
+-f 1
+
+## --- Audit configuration and tools ---------------------------------------------------------
+-w /etc/audit/ -p wa -k auditconfig
+-w /etc/libaudit.conf -p wa -k auditconfig
+-w /etc/audisp/ -p wa -k audispconfig
+-w /sbin/auditctl -p x -k audittools
+-w /sbin/auditd -p x -k audittools
+-w /usr/sbin/augenrules -p x -k audittools
+
+## --- Accounts and groups (identity) --------------------------------------------------------
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+-w /usr/sbin/useradd -p x -k user_modification
+-w /usr/sbin/usermod -p x -k user_modification
+-w /usr/sbin/userdel -p x -k user_modification
+-w /usr/sbin/groupadd -p x -k group_modification
+-w /usr/sbin/groupmod -p x -k group_modification
+-w /usr/sbin/groupdel -p x -k group_modification
+-w /usr/bin/passwd -p x -k passwd_modification
+-w /usr/sbin/chpasswd -p x -k passwd_modification
+
+## --- Privilege: sudoers, PAM, login configuration ------------------------------------------
+-w /etc/sudoers -p wa -k actions
+-w /etc/sudoers.d/ -p wa -k actions
+-w /etc/pam.d/ -p wa -k pam
+-w /etc/security/ -p wa -k pam
+-w /etc/login.defs -p wa -k login
+-w /var/log/faillog -p wa -k login
+-w /var/log/lastlog -p wa -k login
+-w /var/log/tallylog -p wa -k login
+
+## --- SSH ----------------------------------------------------------------------------------
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd
+-w /root/.ssh/ -p wa -k rootkey
+
+## --- Scheduled tasks and services (persistence) --------------------------------------------
+-w /etc/crontab -p wa -k cron
+-w /etc/cron.allow -p wa -k cron
+-w /etc/cron.deny -p wa -k cron
+-w /etc/cron.d/ -p wa -k cron
+-w /etc/cron.hourly/ -p wa -k cron
+-w /etc/cron.daily/ -p wa -k cron
+-w /etc/cron.weekly/ -p wa -k cron
+-w /etc/cron.monthly/ -p wa -k cron
+-w /var/spool/cron/ -p wa -k cron
+-w /etc/systemd/system/ -p wa -k systemd
+-w /usr/lib/systemd/system/ -p wa -k systemd
+-w /etc/ld.so.preload -p wa -k libpath
+
+## --- Kernel modules -------------------------------------------------------------------------
+-w /sbin/insmod -p x -k modules
+-w /sbin/rmmod -p x -k modules
+-w /sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+-a always,exit -F arch=b32 -S init_module,finit_module,delete_module -k modules
+
+## --- Process injection ----------------------------------------------------------------------
+-a always,exit -F arch=b64 -S ptrace -k ptrace
+-a always,exit -F arch=b32 -S ptrace -k ptrace
+
+## --- Time changes ---------------------------------------------------------------------------
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time-change
+-a always,exit -F arch=b32 -S adjtimex,settimeofday,clock_settime -k time-change
+-w /etc/localtime -p wa -k time-change
+
+## --- Mounts and host identity ---------------------------------------------------------------
+-a always,exit -F arch=b64 -S mount,umount2 -F auid>=1000 -F auid!=unset -k mounts
+-a always,exit -F arch=b32 -S mount,umount2 -F auid>=1000 -F auid!=unset -k mounts
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+-a always,exit -F arch=b32 -S sethostname,setdomainname -k system-locale
+-w /etc/hosts -p wa -k system-locale
+-w /etc/hostname -p wa -k system-locale
+
+## --- Program execution (see the CPU warning above) -----------------------------------------
+-a always,exit -F arch=b64 -S execve,execveat -k exec
+-a always,exit -F arch=b32 -S execve,execveat -k exec
+
+## Optional: lock the rules until the next reboot (-e 2). Changing rules then needs a reboot;
+## only enable it once the rule set is settled.
+# -e 2

@@ -1,0 +1,22 @@
+2026-10-21T08:00:01.104512+00:00 web-01 sshd[2101]: Accepted publickey for alice from 192.0.2.10 port 52113 ssh2: ED25519 SHA256:Kq3PZ0xS6wHc0WqgTn6E4l2c8pUo4nq9m3mJqfXo3y4
+2026-10-21T08:00:01.110233+00:00 web-01 sshd[2101]: pam_unix(sshd:session): session opened for user alice(uid=1000) by alice(uid=0)
+2026-10-21T08:00:01.130872+00:00 web-01 systemd-logind[812]: New session 7 of user alice.
+2026-10-21T08:01:12.502174+00:00 web-01 sshd-session[2240]: Failed password for root from 203.0.113.50 port 40022 ssh2
+2026-10-21T08:01:13.877120+00:00 web-01 sshd-session[2240]: Failed password for invalid user admin from 203.0.113.50 port 40022 ssh2
+2026-10-21T08:01:14.001233+00:00 web-01 sshd-session[2242]: Invalid user oracle from 203.0.113.51 port 39811
+2026-10-21T08:01:15.420117+00:00 web-01 sshd-session[2240]: Disconnected from authenticating user root 203.0.113.50 port 40022 [preauth]
+2026-10-21T08:01:16.002004+00:00 web-01 sshd[2101]: Received disconnect from 192.0.2.10 port 52113:11: disconnected by user
+2026-10-21T08:02:00.551920+00:00 web-01 sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+2026-10-21T08:02:00.553410+00:00 web-01 sudo: pam_unix(sudo:session): session opened for user root(uid=0) by alice(uid=1000)
+2026-10-21T08:02:30.004417+00:00 web-01 sudo: pam_unix(sudo:auth): authentication failure; logname=bob uid=1001 euid=0 tty=/dev/pts/1 ruser=bob rhost=  user=bob
+2026-10-21T08:02:35.118021+00:00 web-01 sudo:      bob : user NOT in sudoers ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/bash
+2026-10-21T08:03:00.210554+00:00 web-01 su: (to root) alice on pts/0
+2026-10-21T08:03:00.212017+00:00 web-01 su: pam_unix(su:session): session opened for user root(uid=0) by alice(uid=1000)
+2026-10-21T08:04:00.301990+00:00 web-01 groupadd[2405]: new group: name=deploy, GID=1002
+2026-10-21T08:04:00.300112+00:00 web-01 useradd[2410]: new user: name=deploy, UID=1002, GID=1002, home=/home/deploy, shell=/bin/bash, from=/dev/pts/0
+2026-10-21T08:04:10.402881+00:00 web-01 usermod[2420]: add 'deploy' to group 'sudo'
+2026-10-21T08:04:20.502113+00:00 web-01 passwd[2430]: pam_unix(passwd:chauthtok): password changed for deploy
+2026-10-21T08:04:30.601234+00:00 web-01 chpasswd[2440]: pam_unix(chpasswd:chauthtok): password changed for bob
+2026-10-21T08:04:40.700001+00:00 web-01 userdel[2450]: delete user 'olduser'
+2026-10-21T08:05:00.001002+00:00 web-01 polkitd[690]: Operator of unix-session:7 successfully authenticated as unix-user:alice to gain TEMPORARY authorization for action org.freedesktop.systemd1.manage-units for system-bus-name::1.88 [systemctl restart nginx] (owned by unix-user:alice)
+2026-10-21T08:06:00.120000+00:00 web-01 systemd-logind[812]: Session 7 logged out. Waiting for processes to exit.

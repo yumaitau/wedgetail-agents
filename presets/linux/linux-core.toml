@@ -1,0 +1,217 @@
+#:schema https://raw.githubusercontent.com/yumaitau/wedgetail-agents/main/schema/rules.v1.json
+#
+# linux-core: high-value Linux security logs, on by default on every Linux host.
+#
+# Several sources have one rule per place the distribution writes them. `id` is the file
+# variant; `id.journald` reads the systemd journal instead on hosts without the file (Debian 12
+# and Amazon Linux 2023 images have no rsyslog), and `id.messages` reads busybox
+# `/var/log/messages` on hosts without a journal (Alpine). The agent switches on the one that
+# matches the host when the configuration is loaded (agent-config `linux` module), so a message
+# is sent once. `disable_rules = ["linux-core.auth"]` switches off all variants of a source.
+#
+# Field names and examples for every rule: docs/presets/linux.md.
+
+schema_version = 1
+
+# --- sshd -----------------------------------------------------------------------------------
+
+[[rule]]
+id = "linux-core.sshd"
+type = "file"
+source_type = "linux.auth"
+paths = ["/var/log/auth.log", "/var/log/secure"]
+include_match = ['^(?:\S+ +){2,4}sshd(?:-session|-auth)?\[\d+\]:']
+parser = "syslog_rfc3164"
+
+[[rule]]
+id = "linux-core.sshd.journald"
+type = "journald"
+source_type = "linux.auth"
+# sshd, and the per-connection processes of OpenSSH 9.8 and later, whatever unit runs them
+# (ssh.service, sshd.service, sshd@.service).
+matches = ["SYSLOG_IDENTIFIER=sshd", "SYSLOG_IDENTIFIER=sshd-session", "SYSLOG_IDENTIFIER=sshd-auth"]
+
+[[rule]]
+id = "linux-core.sshd.messages"
+type = "file"
+source_type = "linux.auth"
+paths = ["/var/log/messages"]
+include_match = ['^\S+ +\d+ \S+ \S+ auth(?:priv)?\.[a-z]+ sshd(?:-session|-auth)?\[\d+\]:']
+parser = "regex"
+regex = '^(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<facility_name>[a-z0-9]+)\.(?P<severity_name>[a-z]+) (?P<app_name>[^\s\[\]:]{1,128})(?:\[(?P<proc_id>\d+)\])?: ?(?P<message>.*)$'
+
+# --- Authentication: sudo, su, PAM, logind, polkit, useradd/usermod/userdel/groupadd, passwd,
+# chpasswd, login (everything in the auth and authpriv facilities except sshd) -------------
+
+[[rule]]
+id = "linux-core.auth"
+type = "file"
+source_type = "linux.auth"
+paths = ["/var/log/auth.log", "/var/log/secure"]
+exclude_match = ['^(?:\S+ +){2,4}sshd(?:-session|-auth)?\[\d+\]:']
+parser = "syslog_rfc3164"
+
+[[rule]]
+id = "linux-core.auth.journald"
+type = "journald"
+source_type = "linux.auth"
+# auth (4) and authpriv (10).
+matches = ["SYSLOG_FACILITY=4", "SYSLOG_FACILITY=10"]
+exclude_match = ['"SYSLOG_IDENTIFIER":"sshd(?:-session|-auth)?"']
+
+[[rule]]
+id = "linux-core.auth.messages"
+type = "file"
+source_type = "linux.auth"
+paths = ["/var/log/messages"]
+include_match = ['^\S+ +\d+ \S+ \S+ auth(?:priv)?\.[a-z]+ ']
+exclude_match = ['^\S+ +\d+ \S+ \S+ auth(?:priv)?\.[a-z]+ sshd(?:-session|-auth)?\[\d+\]:']
+parser = "regex"
+regex = '^(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<facility_name>[a-z0-9]+)\.(?P<severity_name>[a-z]+) (?P<app_name>[^\s\[\]:]{1,128})(?:\[(?P<proc_id>\d+)\])?: ?(?P<message>.*)$'
+
+# --- Kernel: security-relevant messages only ------------------------------------------------
+# Module taint and signature failures, lockdown, segfaults and traps, kernel audit lines (when
+# auditd is not running), AppArmor and SELinux denials, iptables/nftables/UFW LOG targets,
+# oopses and new USB devices.
+
+[[rule]]
+id = "linux-core.kernel"
+type = "journald"
+source_type = "linux.kernel"
+matches = ["_TRANSPORT=kernel"]
+include_match = [
+    'taints kernel|tainting kernel|module verification failed|Loading of unsigned module|Lockdown: ',
+    'segfault at |general protection fault|traps: |Oops: |BUG: ',
+    '\baudit: |apparmor=\W{0,2}(?:DENIED|AUDIT)|avc: +denied',
+    '\bIN=\S* OUT=\S*',
+    'New USB device found',
+]
+
+[[rule]]
+id = "linux-core.kernel.messages"
+type = "file"
+source_type = "linux.kernel"
+paths = ["/var/log/messages"]
+include_match = [
+    '^\S+ +\d+ \S+ \S+ kern\.[a-z]+ kernel: .*(?:taints kernel|tainting kernel|module verification failed|Loading of unsigned module|Lockdown: |segfault at |general protection fault|traps: |Oops: |BUG: |\baudit: |apparmor=\W{0,2}(?:DENIED|AUDIT)|avc: +denied|\bIN=\S* OUT=\S*|New USB device found)',
+]
+parser = "regex"
+regex = '^(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<facility_name>[a-z0-9]+)\.(?P<severity_name>[a-z]+) (?P<app_name>[^\s\[\]:]{1,128})(?:\[(?P<proc_id>\d+)\])?: ?(?P<message>.*)$'
+
+# --- Cron and systemd timers ----------------------------------------------------------------
+
+[[rule]]
+id = "linux-core.cron"
+type = "file"
+source_type = "linux.cron"
+paths = ["/var/log/cron"]
+parser = "syslog_rfc3164"
+
+[[rule]]
+id = "linux-core.cron.journald"
+type = "journald"
+source_type = "linux.cron"
+# The cron facility (9): CRON[pid] / crond[pid] job runs, crontab edits, anacron.
+matches = ["SYSLOG_FACILITY=9"]
+
+[[rule]]
+id = "linux-core.cron.messages"
+type = "file"
+source_type = "linux.cron"
+paths = ["/var/log/messages"]
+include_match = ['^\S+ +\d+ \S+ \S+ cron\.[a-z]+ ']
+parser = "regex"
+regex = '^(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<facility_name>[a-z0-9]+)\.(?P<severity_name>[a-z]+) (?P<app_name>[^\s\[\]:]{1,128})(?:\[(?P<proc_id>\d+)\])?: ?(?P<message>.*)$'
+
+[[rule]]
+id = "linux-core.timers"
+type = "journald"
+source_type = "linux.cron"
+# systemd (PID 1) starting timer units, and transient units made by systemd-run
+# (run-<id>.service / .timer), a common persistence technique.
+matches = ["_PID=1"]
+include_match = ['"MESSAGE":"[^"]*\.timer\b', '"MESSAGE":"[^"]*\brun-[A-Za-z0-9]+\.(?:service|timer)\b']
+
+# --- Firewall services ----------------------------------------------------------------------
+
+[[rule]]
+id = "linux-core.firewall"
+type = "journald"
+# Packet LOG lines come from the kernel (linux-core.kernel); this is the daemons themselves.
+units = ["firewalld.service", "ufw.service"]
+
+# --- Package managers -----------------------------------------------------------------------
+
+[[rule]]
+id = "linux-core.dpkg"
+type = "file"
+source_type = "linux.package"
+paths = ["/var/log/dpkg.log"]
+include_match = ['^\S+ \S+ (?:install|upgrade|remove|purge) ']
+parser = "regex"
+regex = '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<action>install|upgrade|remove|purge) (?P<package>[^\s:]+)(?::(?P<arch>\S+))? (?:<none>|(?P<old_version>\S+)) (?:<none>|(?P<version>\S+))$'
+
+[[rule]]
+id = "linux-core.apt"
+type = "file"
+source_type = "linux.package"
+paths = ["/var/log/apt/history.log"]
+# One entry runs from Start-Date to End-Date.
+multiline = { pattern = '^Start-Date: ', negate = true, match = "after", max_lines = 64 }
+max_line_bytes = 98304
+parser = "regex"
+regex = '(?s)^Start-Date: (?P<start_date>[^\n]*)(?:\nCommandline: (?P<command_line>[^\n]*))?(?:\nRequested-By: (?P<requested_by>[^\n]*))?(?:\nInstall: (?P<install>[^\n]*))?(?:\nReinstall: (?P<reinstall>[^\n]*))?(?:\nUpgrade: (?P<upgrade>[^\n]*))?(?:\nDowngrade: (?P<downgrade>[^\n]*))?(?:\nRemove: (?P<remove>[^\n]*))?(?:\nPurge: (?P<purge>[^\n]*))?(?:\nError: (?P<error>[^\n]*))?(?:\nEnd-Date: (?P<end_date>[^\n]*))?\s*$'
+
+[[rule]]
+id = "linux-core.dnf"
+type = "file"
+source_type = "linux.package"
+# dnf 4 (RHEL 8 and 9, Amazon Linux 2023). /var/log/dnf.log is debug output and not read.
+paths = ["/var/log/dnf.rpm.log"]
+include_match = ['^\S+ [A-Z]+ (?:Installed|Upgrade|Upgraded|Downgrade|Downgraded|Erase|Reinstall|Reinstalled|Obsolete|Obsoleted): ']
+parser = "regex"
+regex = '^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})) (?P<level>[A-Z]+) (?P<action>[A-Za-z]+): (?P<package>\S+?)-(?P<version>(?:\d+:)?[^-\s]+-[^-\s]+)\.(?P<arch>[^.\s]+)$'
+
+[[rule]]
+id = "linux-core.yum"
+type = "file"
+source_type = "linux.package"
+# yum 3 (RHEL 7, Amazon Linux 2).
+paths = ["/var/log/yum.log"]
+parser = "regex"
+regex = '^(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<action>[A-Za-z-]+): (?:(?P<epoch>\d+):)?(?P<package>\S+?)(?:-(?P<version>[^-\s]+-[^-\s]+)\.(?P<arch>[^.\s]+))?$'
+
+[[rule]]
+id = "linux-core.zypp"
+type = "file"
+source_type = "linux.package"
+paths = ["/var/log/zypp/history"]
+include_match = ['^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\|(?:install|remove) *\|']
+parser = "regex"
+regex = '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|(?P<action>install|remove) *\|(?P<package>[^|]*)\|(?P<version>[^|]*)\|(?P<arch>[^|]*)\|(?P<requested_by>[^|]*)\|(?:(?P<repository>[^|]+)\|)?'
+
+# --- Login records (binary) -----------------------------------------------------------------
+
+[[rule]]
+id = "linux-core.wtmp"
+type = "file"
+source_type = "linux.login"
+# Logins, logouts, reboots, shutdowns and clock changes.
+paths = ["/var/log/wtmp"]
+format = "utmp"
+
+[[rule]]
+id = "linux-core.btmp"
+type = "file"
+source_type = "linux.login"
+# Failed logins. Readable by root and the utmp group only; see docs/presets/linux.md.
+paths = ["/var/log/btmp"]
+format = "utmp"
+
+[[rule]]
+id = "linux-core.lastlog"
+type = "file"
+source_type = "linux.login"
+# Each user's last login, summarised (at most once an hour, when it changed).
+paths = ["/var/log/lastlog"]
+format = "lastlog"

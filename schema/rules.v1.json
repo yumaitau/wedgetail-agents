@@ -160,6 +160,31 @@
       },
       "additionalProperties": false
     },
+    "FileFormat": {
+      "description": "How a `file` rule turns the bytes of a file into events.",
+      "oneOf": [
+        {
+          "description": "Text lines (default), joined by `multiline` and parsed by `parser`.",
+          "type": "string",
+          "const": "lines"
+        },
+        {
+          "description": "The Linux audit log: records with the same serial are merged into one event.",
+          "type": "string",
+          "const": "auditd"
+        },
+        {
+          "description": "Binary login records (`/var/log/wtmp`, `/var/log/btmp`), glibc layout.",
+          "type": "string",
+          "const": "utmp"
+        },
+        {
+          "description": "Binary `/var/log/lastlog`, sent as a periodic summary rather than raw records.",
+          "type": "string",
+          "const": "lastlog"
+        }
+      ]
+    },
     "HeartbeatConfig": {
       "description": "`[heartbeat]`.",
       "type": "object",
@@ -432,6 +457,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "format": {
+          "description": "`file`: `lines` (default), `auditd` (audit records merged per event), `utmp` (binary\nwtmp/btmp records) or `lastlog` (binary lastlog, summarised).",
+          "$ref": "#/$defs/FileFormat"
         },
         "id": {
           "description": "Unique id, `[a-z0-9][a-z0-9._-]{0,63}`. Sent as `rule_id`; used by `disable_rules`.",

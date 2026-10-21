@@ -16,16 +16,19 @@
 use std::fmt;
 use std::time::Duration;
 
-use agent_config::{Rule, RuleKind};
+use agent_config::{FileFormat, Rule, RuleKind};
 
+pub mod auditd;
 mod event;
 pub mod file_tail;
 pub mod journald;
+pub mod lastlog;
 pub mod lines;
 pub mod macos_unified;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod subprocess;
 pub mod time;
+pub mod utmp;
 pub mod wineventlog;
 
 #[cfg(windows)]
@@ -87,6 +90,10 @@ impl From<std::io::Error> for CollectorError {
 pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, CollectorError> {
     let template = EventTemplate::from_rule(rule);
     match rule.kind {
+        RuleKind::File if rule.format == FileFormat::Lastlog => {
+            let path = rule.paths.first().cloned().unwrap_or_default();
+            Ok(Box::new(lastlog::Lastlog::new(template, path, env.clone())))
+        }
         RuleKind::File => Ok(Box::new(file_tail::FileTail::new(
             template,
             FileSpec::from_rule(rule),
@@ -119,4 +126,14 @@ pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, 
             std::env::consts::OS
         ))),
     }
+}
+
+/// Read at most `max` bytes of a text file.
+pub(crate) fn read_bounded(path: &std::path::Path, max: u64) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(max)
+        .read_to_string(&mut text)?;
+    Ok(text)
 }

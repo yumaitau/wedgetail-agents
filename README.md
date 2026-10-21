@@ -25,8 +25,9 @@ It does not:
   operating system's certificate verifier, and plain `http://` endpoints are refused.
 
 > Status: early. This release has the runtime, collectors, packaging, enrolment with per-host
-> credentials and the rule schema (version 1). The per-OS presets are coming in the next
-> releases.
+> credentials, the rule schema (version 1) and the Linux presets
+> ([docs/presets/linux.md](docs/presets/linux.md)). The Windows and macOS presets are coming in
+> the next releases.
 
 ## Install
 
