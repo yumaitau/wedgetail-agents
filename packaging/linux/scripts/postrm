@@ -1,0 +1,17 @@
+#!/bin/sh
+# On purge (deb) remove state and the service user. RPM erase keeps state like the deb
+# "remove" does; delete /var/lib/wedgetail-agent by hand if wanted.
+set -e
+if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/wedgetail-agent
+    if getent passwd wedgetail-agent >/dev/null; then
+        userdel wedgetail-agent || true
+    fi
+    if getent group wedgetail-agent >/dev/null; then
+        groupdel wedgetail-agent || true
+    fi
+fi
+exit 0

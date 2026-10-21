@@ -1,0 +1,41 @@
+#!/bin/sh
+# Create the service user and state directory. Shared by the .deb (postinst) and .rpm
+# (post-install) packages.
+set -e
+
+USER_NAME=wedgetail-agent
+STATE_DIR=/var/lib/wedgetail-agent
+CONFIG_DIR=/etc/wedgetail-agent
+
+if ! getent group "$USER_NAME" >/dev/null; then
+    groupadd --system "$USER_NAME"
+fi
+if ! getent passwd "$USER_NAME" >/dev/null; then
+    useradd --system --gid "$USER_NAME" --home-dir "$STATE_DIR" --no-create-home \
+        --shell /usr/sbin/nologin --comment "Wedgetail agent" "$USER_NAME"
+fi
+# Read access to logs: adm (Debian/Ubuntu /var/log) and systemd-journal, where they exist.
+for g in adm systemd-journal; do
+    if getent group "$g" >/dev/null; then
+        usermod --append --groups "$g" "$USER_NAME"
+    fi
+done
+
+install -d -o "$USER_NAME" -g "$USER_NAME" -m 0750 "$STATE_DIR"
+install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR" "$CONFIG_DIR/rules.d"
+if [ -f "$CONFIG_DIR/agent.toml" ]; then
+    chown root:"$USER_NAME" "$CONFIG_DIR/agent.toml"
+    chmod 0640 "$CONFIG_DIR/agent.toml"
+fi
+
+if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    # Restart on upgrade if it was running; a fresh install waits for configuration.
+    if systemctl is-active --quiet wedgetail-agent.service; then
+        systemctl restart wedgetail-agent.service || true
+    fi
+fi
+
+echo "wedgetail-agent installed. Set 'endpoint' in $CONFIG_DIR/agent.toml, enrol, then:"
+echo "  systemctl enable --now wedgetail-agent"
+exit 0

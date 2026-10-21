@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wedgetail agent MSI (WiX v4/v5 schema).
+
+    wix build packaging/windows/wedgetail-agent.wxs -arch x64 \
+      -d Version=0.1.0 -d BinPath=target\x86_64-pc-windows-msvc\release\wedgetail-agent.exe \
+      -d ConfigPath=packaging\common\agent.toml -o wedgetail-agent.msi
+
+  Installs the binary and the WedgetailAgent service (NT AUTHORITY\LocalService, automatic
+  start, not started at install because it needs an endpoint and enrolment first). The state
+  directory is writable only by SYSTEM, Administrators and LocalService. agent.toml is kept on
+  upgrade and uninstall.
+
+  Reading the Security channel needs LocalService in the "Event Log Readers" group (or a
+  channel ACL); see README.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Wedgetail Agent" Manufacturer="Yuma IT" Version="$(var.Version)"
+           UpgradeCode="666D62E6-018F-44E8-91B0-D759D654810D" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Wedgetail Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Wedgetail Agent">
+        <Component Id="AgentExe" Guid="41F7E0F7-6C7A-498F-94F1-0E65604F6E8E">
+          <File Id="AgentExe" Name="wedgetail-agent.exe" Source="$(var.BinPath)" KeyPath="yes" />
+          <ServiceInstall Id="AgentService" Name="WedgetailAgent" DisplayName="Wedgetail Agent"
+                          Description="Collects host security logs and ships them to Wedgetail."
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
+                          Account="NT AUTHORITY\LocalService" Arguments="run --service" />
+          <ServiceControl Id="AgentServiceControl" Name="WedgetailAgent" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataFolder" Name="Wedgetail">
+        <Component Id="AgentConfig" Guid="3F1AE771-D2F8-457B-B96F-A93FD6491235" NeverOverwrite="yes" Permanent="yes">
+          <File Id="AgentToml" Name="agent.toml" Source="$(var.ConfigPath)" KeyPath="yes" />
+        </Component>
+        <Directory Id="StateFolder" Name="state">
+          <Component Id="StateDir" Guid="858C06FA-D7DA-46E4-893F-DC4512BD657B" KeyPath="yes">
+            <CreateFolder>
+              <!-- Protected DACL: SYSTEM and Administrators full control, LocalService modify. -->
+              <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)" />
+            </CreateFolder>
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Wedgetail Agent">
+      <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="AgentConfig" />
+      <ComponentRef Id="StateDir" />
+    </Feature>
+  </Package>
+</Wix>

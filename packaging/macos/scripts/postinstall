@@ -1,0 +1,25 @@
+#!/bin/bash
+# Runs as root after the package is installed.
+set -e
+LABEL=au.com.yumait.wedgetail-agent
+PLIST=/Library/LaunchDaemons/$LABEL.plist
+CONFIG_DIR="/Library/Application Support/Wedgetail"
+
+chown root:wheel /usr/local/bin/wedgetail-agent "$PLIST"
+chmod 755 /usr/local/bin/wedgetail-agent
+chmod 644 "$PLIST"
+install -d -o root -g wheel -m 0755 "$CONFIG_DIR" "$CONFIG_DIR/rules.d"
+install -d -o root -g wheel -m 0700 "$CONFIG_DIR/state"
+install -d -o root -g wheel -m 0750 /Library/Logs/Wedgetail
+if [ ! -f "$CONFIG_DIR/agent.toml" ]; then
+    install -o root -g wheel -m 0640 "$CONFIG_DIR/agent.toml.example" "$CONFIG_DIR/agent.toml"
+fi
+
+# (Re)load only once an endpoint is configured; a fresh install waits for configuration.
+launchctl bootout system "$PLIST" 2>/dev/null || true
+if grep -Eq '^[[:space:]]*endpoint[[:space:]]*=' "$CONFIG_DIR/agent.toml"; then
+    launchctl bootstrap system "$PLIST"
+else
+    echo "Set endpoint in $CONFIG_DIR/agent.toml, enrol, then: sudo launchctl bootstrap system $PLIST"
+fi
+exit 0

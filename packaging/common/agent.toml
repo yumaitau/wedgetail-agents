@@ -1,0 +1,47 @@
+# Wedgetail agent configuration.
+#
+# Locations:
+#   Linux    /etc/wedgetail-agent/agent.toml           (+ rules.d/*.toml)
+#   macOS    /Library/Application Support/Wedgetail/agent.toml
+#   Windows  %ProgramData%\Wedgetail\agent.toml
+#
+# Check it with:  wedgetail-agent check-config
+# The agent does not start until `endpoint` is set.
+
+# Your Wedgetail ingest URL (https only), from the Wedgetail console.
+# endpoint = "https://<your ingest URL>"
+
+# state_dir defaults to /var/lib/wedgetail-agent, /Library/Application Support/Wedgetail/state
+# or %ProgramData%\Wedgetail\state.
+
+[buffer]
+# Disk buffer cap in MiB. When full, the oldest unsent events are dropped and counted.
+max_mb = 256
+
+# [limits] defaults are the server limits (1 MiB gzip, 5,000 records, 120 requests a minute)
+# and can only be lowered.
+
+# Collector rules. Presets and more rule types arrive in later releases.
+#
+# [[rule]]
+# id = "nginx.access"
+# type = "file"
+# paths = ["/var/log/nginx/access.log"]
+# source_label = "web/nginx"
+# tags = { env = "prod" }
+#
+# [[rule]]
+# id = "ssh"
+# type = "journald"
+# matches = ["_SYSTEMD_UNIT=ssh.service"]
+#
+# [[rule]]
+# id = "security"
+# type = "wineventlog"
+# channel = "Security"
+# event_ids = [4624, 4625, 4720]
+#
+# [[rule]]
+# id = "macos.auth"
+# type = "macos_unified"
+# predicate = 'subsystem == "com.apple.Authorization"'

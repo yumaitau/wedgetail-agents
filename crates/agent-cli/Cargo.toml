@@ -1,0 +1,71 @@
+[package]
+name = "agent-cli"
+description = "The wedgetail-agent binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wedgetail-agent"
+path = "src/main.rs"
+
+[dependencies]
+agent-collectors.workspace = true
+agent-config.workspace = true
+agent-core.workspace = true
+ctrlc = { version = "3.5", features = ["termination"] }
+log.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-service.workspace = true
+
+[lints]
+workspace = true
+
+# `cargo deb -p agent-cli --target <triple>`. Paths are relative to this crate; target/release
+# is mapped to the target-specific directory.
+[package.metadata.deb]
+name = "wedgetail-agent"
+maintainer = "Yuma IT <justin@yumait.com.au>"
+copyright = "2026, Yuma IT"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Collects high-value security logs (files, the systemd journal) and ships them to your \
+Wedgetail install over HTTPS. Collect and ship only: no inbound listener, no remote commands."""
+section = "admin"
+priority = "optional"
+depends = ""
+maintainer-scripts = "../../packaging/linux/scripts/"
+conf-files = ["/etc/wedgetail-agent/agent.toml"]
+assets = [
+    ["target/release/wedgetail-agent", "usr/bin/", "755"],
+    ["../../packaging/linux/wedgetail-agent.service", "lib/systemd/system/", "644"],
+    ["../../packaging/common/agent.toml", "etc/wedgetail-agent/agent.toml", "640"],
+    ["../../README.md", "usr/share/doc/wedgetail-agent/", "644"],
+]
+
+# `cargo generate-rpm -p crates/agent-cli --target <triple>`.
+[package.metadata.generate-rpm]
+name = "wedgetail-agent"
+summary = "Wedgetail host agent"
+license = "Apache-2.0"
+url = "https://github.com/yumaitau/wedgetail-agents"
+post_install_script = "../../packaging/linux/scripts/postinst"
+pre_uninstall_script = "../../packaging/linux/scripts/prerm"
+post_uninstall_script = "../../packaging/linux/scripts/postrm"
+assets = [
+    { source = "target/release/wedgetail-agent", dest = "/usr/bin/wedgetail-agent", mode = "755" },
+    { source = "../../packaging/linux/wedgetail-agent.service", dest = "/usr/lib/systemd/system/wedgetail-agent.service", mode = "644" },
+    { source = "../../packaging/common/agent.toml", dest = "/etc/wedgetail-agent/agent.toml", mode = "640", config = "noreplace" },
+    { source = "../../README.md", dest = "/usr/share/doc/wedgetail-agent/README.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+# Static musl binary: only the user tools used by the scriptlets.
+shadow-utils = "*"
