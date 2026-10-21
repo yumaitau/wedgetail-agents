@@ -53,7 +53,10 @@ pub struct Preset {
     pub toml: &'static str,
 }
 
-/// Every preset compiled into this agent. Empty until the per-OS preset tickets land.
+#[cfg(windows)]
+pub mod windows;
+
+/// Every preset compiled into this agent.
 pub static BUILTIN: &[Preset] = &[
     Preset {
         id: "linux-core",
@@ -72,6 +75,61 @@ pub static BUILTIN: &[Preset] = &[
         os: "linux",
         auto: Auto::OptIn,
         toml: include_str!("../../../presets/linux/linux-containers.toml"),
+    },
+    // Windows (docs/presets/windows.md).
+    Preset {
+        id: "windows-security",
+        os: "windows",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/windows/windows-security.toml"),
+    },
+    Preset {
+        id: "windows-security-objects",
+        os: "windows",
+        auto: Auto::OptIn,
+        toml: include_str!("../../../presets/windows/windows-security-objects.toml"),
+    },
+    Preset {
+        id: "windows-security-dc",
+        os: "windows",
+        auto: Auto::OptIn,
+        toml: include_str!("../../../presets/windows/windows-security-dc.toml"),
+    },
+    Preset {
+        id: "windows-system",
+        os: "windows",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/windows/windows-system.toml"),
+    },
+    Preset {
+        id: "windows-powershell",
+        os: "windows",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/windows/windows-powershell.toml"),
+    },
+    Preset {
+        id: "windows-sysmon",
+        os: "windows",
+        auto: Auto::Detect(detect::windows_sysmon),
+        toml: include_str!("../../../presets/windows/windows-sysmon.toml"),
+    },
+    Preset {
+        id: "windows-defender",
+        os: "windows",
+        auto: Auto::Detect(detect::windows_defender),
+        toml: include_str!("../../../presets/windows/windows-defender.toml"),
+    },
+    Preset {
+        id: "windows-operational",
+        os: "windows",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/windows/windows-operational.toml"),
+    },
+    Preset {
+        id: "windows-app-control",
+        os: "windows",
+        auto: Auto::Default,
+        toml: include_str!("../../../presets/windows/windows-app-control.toml"),
     },
 ];
 
@@ -180,6 +238,30 @@ pub fn rule_check_passes(rule_id: &str) -> bool {
         .iter()
         .filter(|c| c.rule_id == rule_id)
         .all(|c| (c.check)())
+}
+
+/// Detection functions for [`Auto::Detect`] presets. Each one exists on every OS (the registry
+/// is the same everywhere) and returns false off its own OS.
+mod detect {
+    /// The Sysmon channel is registered (Sysmon is installed).
+    pub(super) fn windows_sysmon() -> bool {
+        windows_channel("Microsoft-Windows-Sysmon/Operational")
+    }
+
+    /// The Microsoft Defender Antivirus channel is registered.
+    pub(super) fn windows_defender() -> bool {
+        windows_channel("Microsoft-Windows-Windows Defender/Operational")
+    }
+
+    #[cfg(windows)]
+    fn windows_channel(channel: &str) -> bool {
+        super::windows::channel_state(channel) != super::windows::ChannelState::Missing
+    }
+
+    #[cfg(not(windows))]
+    fn windows_channel(_channel: &str) -> bool {
+        false
+    }
 }
 
 /// The result of resolving a `presets` selection.

@@ -113,8 +113,8 @@ pub fn from_rule(rule: &Rule, env: &CollectorEnv) -> Result<Box<dyn Collector>, 
         ))),
         #[cfg(windows)]
         RuleKind::Wineventlog => {
-            let query = wineventlog::build_xpath(&rule.event_ids, rule.xpath.as_deref());
             let channel = rule.channel.clone().unwrap_or_default();
+            let query = wineventlog::build_xpath(&channel, &rule.event_ids, rule.xpath.as_deref());
             Ok(Box::new(os::windows::eventlog::EventLog::new(
                 template, channel, query,
             )))

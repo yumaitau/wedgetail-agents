@@ -25,6 +25,8 @@ mod logger;
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod os;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod winaudit;
 
 const USAGE: &str = "\
 Usage: wedgetail-agent <command> [options]
@@ -34,7 +36,8 @@ Commands:
   enrol          Enrol this host with Wedgetail (run as root or an administrator)
   check-config   Validate agent.toml, rules.d and presets, print every problem with its
                  file and line, then exit (non-zero when invalid)
-  status         Show enrolment and the running agent's last status
+  status         Show enrolment and the running agent's last status (on Windows also
+                 audit policy and channels the presets need; read only)
   version        Print the version
 
 Options:
@@ -379,10 +382,12 @@ fn check_config(config_path: &Path) -> Result<(), String> {
 }
 
 fn status(config_path: &Path, json: bool) -> Result<(), String> {
-    let state_dir = match AgentConfig::load(config_path) {
-        Ok(config) => config.state_dir,
-        Err(_) => agent_config::paths::default_state_dir(),
-    };
+    let config = AgentConfig::load(config_path).ok();
+    let state_dir = config
+        .as_ref()
+        .map_or_else(agent_config::paths::default_state_dir, |c| {
+            c.state_dir.clone()
+        });
     let enrolment = enrol::status(
         &state_dir,
         credential_store(&state_dir).as_ref(),
@@ -400,13 +405,31 @@ fn status(config_path: &Path, json: bool) -> Result<(), String> {
     })?;
     let mut s: Value =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let windows = windows_checks(config.as_ref());
     if json {
         s["enrolment"] = enrolment;
+        if let Some(w) = windows {
+            s["windows"] = w;
+        }
         out(&serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?);
     } else {
         out(&format_status(&s));
+        if let Some(w) = &windows {
+            out(&winaudit::format_report(w));
+        }
     }
     Ok(())
+}
+
+/// Audit policy, process command line and channel checks (Windows only, read only).
+#[cfg(windows)]
+fn windows_checks(config: Option<&AgentConfig>) -> Option<Value> {
+    config.map(os::windows::audit::checks)
+}
+
+#[cfg(not(windows))]
+fn windows_checks(_config: Option<&AgentConfig>) -> Option<Value> {
+    None
 }
 
 fn format_status(s: &Value) -> String {
@@ -450,13 +473,20 @@ fn format_status(s: &Value) -> String {
         format!("last error:  {}", text(&s["ship"]["last_error"])),
         "collectors:".to_owned(),
     ];
-    for c in s["collectors"].as_array().into_iter().flatten() {
+    let collectors = s["collectors"].as_array().cloned().unwrap_or_default();
+    let width = collectors
+        .iter()
+        .map(|c| text(&c["rule_id"]).len())
+        .max()
+        .unwrap_or(0)
+        .max(24);
+    for c in &collectors {
         let err = c
             .get("last_error")
             .map(|e| format!(" last error: {}", text(e)))
             .unwrap_or_default();
         lines.push(format!(
-            "  {:<24} {:<8} errors {}{err}",
+            "  {:<width$} {:<8} errors {}{err}",
             text(&c["rule_id"]),
             text(&c["state"]),
             text(&c["errors"])

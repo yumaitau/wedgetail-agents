@@ -38,6 +38,10 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
+      # Prints what the Event Log service accepts on this build (preset queries, long id lists).
+      - name: Windows Event Log evidence
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p agent-collectors --lib os::windows -- --nocapture --test-threads 1
       # Also part of `cargo test`; a named step so a stale schema is obvious in the checks.
       - name: JSON Schema is current (schema/rules.v1.json)
         run: cargo test --locked -p agent-config json_schema_is_current
@@ -158,8 +162,13 @@ jobs:
           if-no-files-found: error
 
   windows-msi:
-    name: windows (msi)
-    runs-on: windows-latest
+    name: windows (msi, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows Server 2022 and 2025 (windows-latest).
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -167,6 +176,8 @@ jobs:
       - name: Rust toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.runner }}
       - name: Build
         run: cargo build --locked --release
       - name: WiX
@@ -177,7 +188,7 @@ jobs:
           wix build packaging/windows/wedgetail-agent.wxs -arch x64 `
             -d Version=0.1.0 -d BinPath=target/release/wedgetail-agent.exe `
             -d ConfigPath=packaging/common/agent.toml -o dist/wedgetail-agent-x86_64.msi
-      - name: Install, start, stop and uninstall the service
+      - name: Install, start and reload the service
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -196,7 +207,9 @@ jobs:
           Get-Content "$env:ProgramData\Wedgetail\state\agent.log"
           & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" status
           $status = Get-Content "$env:ProgramData\Wedgetail\state\status.json" -Raw | ConvertFrom-Json
-          if ($status.collectors[0].state -ne 'running') { throw "collector is $($status.collectors[0].state): $($status.collectors[0].last_error)" }
+          # The Windows presets load first ("auto"); find the rule from agent.toml by id.
+          $app = $status.collectors | Where-Object rule_id -eq 'app'
+          if ($app.state -ne 'running') { throw "collector is $($app.state): $($app.last_error)" }
           # Reload through the service control: valid changes apply, invalid ones are refused.
           $config = "endpoint = `"https://ingest.example.invalid`"`n[[rule]]`nid = `"app`"`ntype = `"wineventlog`"`nchannel = `"Application`"`n[[rule]]`nid = `"system`"`ntype = `"wineventlog`"`nchannel = `"System`"`n"
           Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value $config -Encoding utf8NoBOM
@@ -210,14 +223,26 @@ jobs:
           Start-Sleep -Seconds 3
           if ((Get-Service WedgetailAgent).Status -ne 'Running') { throw "service stopped after an invalid reload" }
           if (-not (Select-String -Path "$env:ProgramData\Wedgetail\state\agent.log" -Pattern 'keeping the running configuration' -Quiet)) { throw "invalid reload not logged" }
-          Stop-Service WedgetailAgent
+      # Presets end to end against a mock endpoint: enrol, ship, restart, no loss or duplicates.
+      - name: Presets end to end (mock ingest)
+        shell: pwsh
+        run: .github/scripts/windows-e2e.ps1
+      - name: Agent log
+        if: always()
+        shell: pwsh
+        run: Get-Content "$env:ProgramData\Wedgetail\state\agent.log" -Tail 200 -ErrorAction SilentlyContinue
+      - name: Stop and uninstall the service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Stop-Service WedgetailAgent -ErrorAction SilentlyContinue
           $p = Start-Process msiexec -ArgumentList '/x', 'dist\wedgetail-agent-x86_64.msi', '/qn', '/l*v', 'uninstall.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content uninstall.log -Tail 50; throw "uninstall failed: $($p.ExitCode)" }
           if (Get-Service WedgetailAgent -ErrorAction SilentlyContinue) { throw "service still installed" }
           if (Test-Path "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe") { throw "binary still installed" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-msi
+          name: windows-msi-${{ matrix.runner }}
           path: dist/
           if-no-files-found: error
 

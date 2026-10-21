@@ -294,9 +294,13 @@ event_ids = [1149]
 
 | Field | Type | Default | Valid values and meaning |
 | --- | --- | --- | --- |
-| `channel` | string | required | 1 to 256 characters, for example `Security`, `System`, `Microsoft-Windows-Sysmon/Operational`. Reading `Security` needs the extra right described in the agent guide. |
-| `event_ids` | list of integers | all | At most 256 ids, each 1 to 65,535. |
-| `xpath` | string | none | A raw XPath query (1 to 4,096 characters); overrides `event_ids`. |
+| `channel` | string | required | 1 to 256 characters, for example `Security`, `System`, `Microsoft-Windows-Sysmon/Operational`. Reading `Security` and Sysmon needs the agent account in Event Log Readers; see [Windows presets](presets/windows.md#rights-the-agent-needs). |
+| `event_ids` | list of integers | all | At most 256 ids, each 1 to 65,535. Filtered by the Event Log service at subscription time; more than 20 ids become a structured query with one `Select` per 20, because the service refuses long expressions. |
+| `xpath` | string | none | A raw XPath query, or a structured `<QueryList>` query (1 to 4,096 characters); overrides `event_ids`. |
+
+Events resume after a saved bookmark, so a restart neither repeats nor loses events. Split
+PowerShell 4104 script blocks are joined into one event (see
+[Windows presets](presets/windows.md#powershell-script-blocks)).
 
 ## `type = "macos_unified"`
 
@@ -431,6 +435,7 @@ reload), and `check-config` shows it as disabled.
 | OS | Presets |
 | --- | --- |
 | Linux | `linux-core`, `linux-auditd`, `linux-containers`: [docs/presets/linux.md](presets/linux.md) |
+| Windows | `windows-security`, `windows-security-objects`, `windows-security-dc`, `windows-system`, `windows-powershell`, `windows-sysmon`, `windows-defender`, `windows-operational`, `windows-app-control`: [docs/presets/windows.md](presets/windows.md) |
 
 ## Compatibility
 

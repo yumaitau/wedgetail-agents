@@ -111,8 +111,9 @@ child process. Linux and Windows figures on real hosts are still to be measured.
 - **Least privilege.** Linux: a dedicated `wedgetail-agent` user in `adm` and `systemd-journal`
   only, no capabilities, a strict systemd sandbox (`ProtectSystem=strict`, `NoNewPrivileges`,
   system call filter); reading auditd logs needs `CAP_DAC_READ_SEARCH`, which you opt into with
-  a drop-in. Windows: `LocalService`; reading the Security channel needs `LocalService` in
-  the "Event Log Readers" group or a channel ACL. macOS: runs as root because `log stream`
+  a drop-in. Windows: `LocalService` in the "Event Log Readers" group, which covers the
+  Security channel too while it keeps its default access list
+  ([docs/presets/windows.md](docs/presets/windows.md#rights-the-agent-needs)). macOS: runs as root because `log stream`
   refuses non-admin users, and an admin service account would also be able to use sudo.
 - **No inbound surface.** No listener, no remote commands, no shell, no self-update. Updates
   come from your OS package manager or a signed release.

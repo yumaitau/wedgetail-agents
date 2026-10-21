@@ -11,8 +11,8 @@
   directory is writable only by SYSTEM, Administrators and LocalService. agent.toml is kept on
   upgrade and uninstall.
 
-  Reading the Security channel needs LocalService in the "Event Log Readers" group (or a
-  channel ACL); see README.
+  The presets need LocalService in the "Event Log Readers" group (Security and Sysmon
+  channels); the installer does not change group membership. See docs/presets/windows.md.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Wedgetail Agent" Manufacturer="Yuma IT" Version="$(var.Version)"

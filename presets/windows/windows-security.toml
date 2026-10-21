@@ -1,0 +1,44 @@
+# Preset windows-security: high-value Security channel events (on by default on Windows).
+# Reading Security needs the agent account in Event Log Readers; see docs/presets/windows.md.
+# Most of these events are only written when the matching audit policy subcategory is on:
+# `wedgetail-agent status` lists the recommended ones that are off, and
+# presets/windows/recommended-audit-policy.md explains them. The agent never changes policy.
+schema_version = 1
+
+# Logons, logoffs, explicit credentials, special privileges, NTLM and Kerberos (4768, 4769
+# and 4771 are only written on domain controllers), RDP reconnect and disconnect.
+[[rule]]
+id = "windows-security.logon"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4624, 4625, 4634, 4647, 4648, 4672, 4776, 4768, 4769, 4771, 4778, 4779]
+
+# Process creation (with the command line when "Include command line in process creation
+# events" is on) and termination.
+[[rule]]
+id = "windows-security.process"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4688, 4689]
+
+# Local and domain account and security group changes, lockouts and unlocks.
+[[rule]]
+id = "windows-security.accounts"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4720, 4722, 4723, 4724, 4725, 4726, 4728, 4732, 4738, 4740, 4756, 4767]
+
+# Tampering: log cleared, audit policy and domain policy changes, security event sources,
+# firewall rule changes.
+[[rule]]
+id = "windows-security.policy"
+type = "wineventlog"
+channel = "Security"
+event_ids = [1102, 4719, 4739, 4904, 4905, 4946, 4947, 4948]
+
+# Services installed and scheduled tasks created, deleted, enabled, disabled or updated.
+[[rule]]
+id = "windows-security.services"
+type = "wineventlog"
+channel = "Security"
+event_ids = [4697, 4698, 4699, 4700, 4701, 4702]

@@ -1,0 +1,20 @@
+# Preset windows-system: System channel service, log-clear and start/stop events (on by
+# default on Windows).
+schema_version = 1
+
+# Service installed (7045) or start type changed (7040), any log cleared (104), event log
+# started/stopped (6005/6006), unexpected shutdown (6008), shutdown or restart requested (1074).
+[[rule]]
+id = "windows-system.core"
+type = "wineventlog"
+channel = "System"
+event_ids = [7045, 7040, 104, 6005, 6006, 6008, 1074]
+
+# 7036 (service state change) only when a security service stops: every other 7036 is noise.
+# param1 is the service display name as written by the Service Control Manager; param2 is
+# "stopped" on English systems (other languages: copy this rule with the local words).
+[[rule]]
+id = "windows-system.service-stopped"
+type = "wineventlog"
+channel = "System"
+xpath = "*[System[(EventID=7036)] and EventData[Data[@Name='param2']='stopped'] and EventData[(Data[@Name='param1']='Windows Event Log' or Data[@Name='param1']='Microsoft Defender Antivirus Service' or Data[@Name='param1']='Microsoft Defender Antivirus Network Inspection Service' or Data[@Name='param1']='Windows Defender Advanced Threat Protection Service' or Data[@Name='param1']='Windows Defender Firewall' or Data[@Name='param1']='Security Center' or Data[@Name='param1']='Sysmon' or Data[@Name='param1']='Sysmon64' or Data[@Name='param1']='Wedgetail Agent')]]"
