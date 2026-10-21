@@ -1,8 +1,9 @@
 # Preset windows-app-control-allowed (opt-in): AppLocker ALLOWED events, the "allowed" half of
 # ISM-1660 (allowed and blocked application control events are centrally logged). High volume:
-# one event for every allowed program start, and with DLL rules enforced one for every DLL
-# load, so "auto" does not select it. Add it to `presets` where you need that evidence; the
-# blocked and audit events are in windows-app-control (on by default).
+# one event for every allowed program start, packaged app start and install, and with DLL
+# rules enforced one for every DLL load, so "auto" does not select it. Add it to `presets`
+# where you need that evidence; the blocked and audit events are in windows-app-control (on
+# by default).
 schema_version = 1
 
 # Executable or DLL allowed to run (8002).
@@ -18,3 +19,17 @@ id = "windows-app-control-allowed.applocker-script"
 type = "wineventlog"
 channel = "Microsoft-Windows-AppLocker/MSI and Script"
 event_ids = [8005]
+
+# Packaged app allowed to run (8020).
+[[rule]]
+id = "windows-app-control-allowed.applocker-packaged-execution"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Execution"
+event_ids = [8020]
+
+# Packaged app installation allowed (8023).
+[[rule]]
+id = "windows-app-control-allowed.applocker-packaged-deployment"
+type = "wineventlog"
+channel = "Microsoft-Windows-AppLocker/Packaged app-Deployment"
+event_ids = [8023]

@@ -31,7 +31,7 @@ Contents:
 | `windows-defender` | when the Defender channel exists | `Microsoft-Windows-Windows Defender/Operational` |
 | `windows-operational` | yes | Task Scheduler, RDP (RemoteConnectionManager, LocalSessionManager), WMI-Activity, Windows Firewall, BITS |
 | `windows-app-control` | yes | `Microsoft-Windows-AppLocker/*` (4 channels), `Microsoft-Windows-CodeIntegrity/Operational` |
-| `windows-app-control-allowed` | no (opt-in, high volume) | `Microsoft-Windows-AppLocker/EXE and DLL`, `Microsoft-Windows-AppLocker/MSI and Script` |
+| `windows-app-control-allowed` | no (opt-in, high volume) | `Microsoft-Windows-AppLocker/*` (4 channels) |
 
 Detection for `windows-sysmon` and `windows-defender` is a registry lookup under
 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels`; it runs when the agent
@@ -214,13 +214,14 @@ Audit mode (8003, 8006, 8021, 8024, 3034, 3076) and enforced blocks (8004, 8007,
 | --- | --- | --- | --- | --- |
 | `windows-app-control-allowed.applocker-exe` | `Microsoft-Windows-AppLocker/EXE and DLL` | 8002 | Executables and DLLs allowed to run, with the matching AppLocker rule, file path, hash and publisher | An AppLocker policy (enforced or audit) |
 | `windows-app-control-allowed.applocker-script` | `Microsoft-Windows-AppLocker/MSI and Script` | 8005 | MSI files and scripts allowed to run, with the matching rule | An AppLocker policy (enforced or audit) |
+| `windows-app-control-allowed.applocker-packaged-execution` | `Microsoft-Windows-AppLocker/Packaged app-Execution` | 8020 | Packaged apps allowed to run, with the matching rule and publisher | An AppLocker policy with packaged app rules |
+| `windows-app-control-allowed.applocker-packaged-deployment` | `Microsoft-Windows-AppLocker/Packaged app-Deployment` | 8023 | Packaged app installs allowed, with the matching rule and publisher | An AppLocker policy with packaged app rules |
 
 ISM-1660 asks for allowed **and** blocked application control events to be centrally logged.
 `windows-app-control` gives the blocked and audit half on every host; add
 `windows-app-control-allowed` to `presets` on hosts where you need the allowed half as
-evidence. It covers EXE, DLL, MSI and script rules only: on hosts whose AppLocker policy also
-has packaged app rules, add your own rules for 8020 and 8023 (below) to complete the allowed
-half.
+evidence. It covers every AppLocker rule collection: EXE and DLL (8002), MSI and script
+(8005), packaged app execution (8020) and packaged app installation (8023).
 
 ```toml
 [agent]
@@ -228,27 +229,11 @@ presets = ["auto", "windows-app-control-allowed"]
 ```
 
 It is opt-in because of volume: AppLocker writes one 8002 event for every allowed program
-start (roughly the rate of 4688 process creation), and when DLL rules are enforced one for
-every DLL load, which can be thousands an hour per workstation. If the EXE and DLL volume is
-too high, keep only the MSI and script rule with
-`disable_rules = ["windows-app-control-allowed.applocker-exe"]`. Allowed packaged apps (8020, 8023) and App Control for
-Business allowed events are not collected: App Control does not log allowed files by
-default, and AppLocker writes 8020/8023 for every packaged app start and install. Where
-packaged app rules are part of the policy, collect them with your own rules:
-
-```toml
-[[rule]]
-id = "site-applocker-packaged-execution-allowed"
-type = "wineventlog"
-channel = "Microsoft-Windows-AppLocker/Packaged app-Execution"
-event_ids = [8020]
-
-[[rule]]
-id = "site-applocker-packaged-deployment-allowed"
-type = "wineventlog"
-channel = "Microsoft-Windows-AppLocker/Packaged app-Deployment"
-event_ids = [8023]
-```
+start (roughly the rate of 4688 process creation), one 8020 for every packaged app start, and
+when DLL rules are enforced one 8002 for every DLL load, which can be thousands an hour per
+workstation. If the EXE and DLL volume is too high, keep the other three rules with
+`disable_rules = ["windows-app-control-allowed.applocker-exe"]`. App Control for Business
+allowed events are not collected: App Control does not log allowed files by default.
 
 ## How events are collected
 
