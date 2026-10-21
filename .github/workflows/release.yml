@@ -88,7 +88,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
-      - run: cargo build --locked --release
+      - run: cargo build --locked --release --workspace
       - name: Import the Authenticode certificate
         if: env.WINDOWS_CERT_PFX_BASE64 != ''
         run: |

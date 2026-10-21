@@ -7,7 +7,7 @@ directory `%ProgramData%\Wedgetail\state` is writable only by SYSTEM, Administra
 LocalService. `agent.toml` and the state directory are kept on upgrade and uninstall.
 
 ```powershell
-cargo build --release
+cargo build --release --workspace
 wix build packaging/windows/wedgetail-agent.wxs -arch x64 `
   -d Version=0.1.0 -d BinPath=target/release/wedgetail-agent.exe `
   -d CaPath=target/release/wedgetail_msi.dll `

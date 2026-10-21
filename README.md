@@ -163,9 +163,12 @@ Rust 1.95 (pinned in `rust-toolchain.toml`).
 
 ```sh
 cargo build --release
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+`crates/agent-msi` (a Windows DLL) is not a default member: build it on Windows with
+`cargo build --release --workspace` or `-p agent-msi`.
 
 Static Linux build: `rustup target add x86_64-unknown-linux-musl`, install `musl-tools`, then
 `cargo build --release --target x86_64-unknown-linux-musl`. Packages: `cargo deb -p agent-cli`,

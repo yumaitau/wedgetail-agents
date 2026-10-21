@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/agent-core", "crates/agent-collectors", "crates/agent-config", "crates/agent-cli", "crates/agent-msi"]
+# agent-msi is a Windows cdylib (the MSI custom actions), which static musl targets cannot
+# build: plain `cargo build` leaves it out; CI builds and tests it with --workspace.
+default-members = ["crates/agent-core", "crates/agent-collectors", "crates/agent-config", "crates/agent-cli"]
 
 [workspace.package]
 version = "0.1.0"
