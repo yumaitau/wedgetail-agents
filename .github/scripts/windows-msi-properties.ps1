@@ -43,7 +43,8 @@ function AssertConfigAcl {
     $acl = Get-Acl $toml
     Write-Host "agent.toml owner: $($acl.Owner)"
     $acl.Access | Format-Table IdentityReference, FileSystemRights, AccessControlType, IsInherited -AutoSize | Out-String | Write-Host
-    $write = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Write, Modify, FullControl, ChangePermissions, TakeOwnership, Delete'
+    # Only the bits that change the file (Modify and FullControl include the read bits too).
+    $write = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership'
     foreach ($ace in $acl.Access) {
         $who = $ace.IdentityReference.Value
         if ($ace.AccessControlType -ne 'Allow') { continue }
