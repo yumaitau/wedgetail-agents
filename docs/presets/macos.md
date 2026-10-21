@@ -27,8 +27,9 @@ Contents:
   no remote commands and executes only `/usr/bin/log` and, for `macos-audit`,
   `/usr/sbin/praudit`, always with a fixed argument list.
 - macOS 13 or later for Background Task Management events (`macos-core.persistence`); the
-  other rules work on any macOS with the unified log. Only macOS 26 on Apple silicon has been
-  tested so far (see [the last section](#what-was-tested-and-what-was-not)).
+  other rules work on any macOS with the unified log. Run as the root daemon on macOS 14,
+  15 (Apple silicon and Intel) and 26 in CI, measured on macOS 26 only (see
+  [the last section](#what-was-tested-and-what-was-not)).
 - `macos-audit` needs auditd running. Apple deprecated audit(4) in macOS 11 and turned it off
   by default from macOS 14 (no `/etc/security/audit_control`, launchd job `com.apple.auditd`
   disabled), so on a default install `"auto"` does not select the preset. Apple's notice in
@@ -102,7 +103,11 @@ eventType == "logEvent" AND NOT eventMessage BEGINSWITH "Too many groups request
 )
 ```
 
-- `sudo`, `su`, `login`: command lines and failures, for example
+- `sudo`, `su`, `login`: command lines and failures. macOS 14 writes sudo's command lines
+  to the unified log; on GitHub's macOS 15.7 and 26.6 runners sudo logged only
+  `Reading config` there, so on those releases sudo use is only visible through
+  `macos-audit` (`AUE_sudo`, when auditd is on) or Endpoint Security (`NOTIFY_SUDO`, phase 2).
+  Examples:
   `alice : 3 incorrect password attempts ; TTY=ttys001 ; PWD=/Users/alice ; USER=root ; COMMAND=/usr/bin/true`
   or `  runner : TTY=... ; PWD=... ; USER=root ; COMMAND=/usr/local/bin/wedgetail-agent status`
   (seen on macOS 14). Only `sudo` lines with the ` ; ` field separator are kept: every
@@ -274,7 +279,10 @@ daemons that log through syslog). When the file does not exist the rule waits fo
 
 ### `macos-audit.trail`
 
-`macos_bsm`, `source_type` `macos.bsm`, `classes = ["lo", "aa", "ad", "ex"]`.
+`macos_bsm`, `source_type` `macos.bsm`, `classes = ["lo", "aa", "ad", "ex"]`,
+`exclude_events = ["AUE_MAC_SYSCALL"]`. `mac_syscall(2)` is in class `ad` but is how the
+sandbox and code signing policy modules are called; with `ad` on, GitHub's macOS runners
+wrote thousands of these records within seconds.
 
 Reads the trail auditd is writing (`/var/audit/current`, a symlink to
 `/var/audit/<start>.not_terminated`) and follows it across rotations: when auditd renames
@@ -286,7 +294,7 @@ half-written record is never sent and garbage is skipped to the next valid recor
 chunk of up to 512 KiB is converted with `/usr/sbin/praudit -x -r` (XML, numeric form, so
 times and ids do not depend on the time zone or the user database). Event names and
 classes come from `/etc/security/audit_event`; events not in one of the four classes are
-dropped by the agent.
+dropped by the agent before `praudit` runs (the event number is in the binary header).
 
 Classes, from `/etc/security/audit_class`: `lo` login and logout (`AUE_login`,
 `AUE_logout`, `AUE_lw_login` loginwindow, `AUE_openssh`, `AUE_su`), `aa` authentication and
@@ -464,7 +472,7 @@ Six `log stream` processes is a deliberate trade: merging them into one would no
 would lose per-rule `disable_rules` and per-rule rate limits. Each `log stream` process
 uses about 5 MB of memory.
 
-Intel Macs and macOS 14/15 have not been measured.
+CPU on Intel Macs and on macOS 14/15 has not been measured.
 
 ## Volume
 
@@ -551,9 +559,26 @@ the real `log`.
 
 All captured lines were sanitised: user and host names, addresses, application names,
 UUIDs and path hashes were replaced with fictional values, and timestamps moved to
-2026-10-21.
+2026-10-21. Every unified fixture line was also checked against its rule's predicate with
+Foundation's `NSPredicate` on macOS 26, and the Gatekeeper and login item lines were found
+again in the log store with `log show --predicate <rule predicate>` around the time they
+were captured.
 
-Not done yet (needs hardware, accounts or certificates): runs on macOS 14 and 15, on Intel,
-on an MDM-managed Mac, as the root launchd daemon with a signed and notarised build, an SSH
-login and failed sudo on a real Mac, and the end-to-end check that these events arrive in
-Athena.
+On the test Mac (Apple M3 Max, macOS 26.6.2) the release agent ran with `macos-core` as an
+administrator (not root) for five 5-minute windows, buffering real events from
+`macos-core.auth`, `gatekeeper`, `tcc`, `mdm` and `syslog`; that is where the CPU figures come
+from. The `macos-audit` collector ran against a temporary trail directory with the real
+`praudit`, including rotation while stopped.
+
+CI (`macos (pkg, unsigned, ...)` jobs) installs the unsigned package on GitHub's
+macOS 14.8 (Apple silicon), 15.7 (Apple silicon and Intel) and 26.6 (Apple silicon) images,
+turns auditd on with flags `lo,aa,ad,ex`, runs the agent as the root launchd daemon with
+`"auto"` presets (so both `macos-core` and `macos-audit` load) and checks from the disk
+buffer that: `macos-core` rules buffer real events (on macOS 14 the `sudo` command line of
+the job's own `sudo /usr/bin/true`), and `macos-audit.trail` reads the live trail (for
+example 60 `AUE_EXECVE` records on macOS 14) with no `AUE_MAC_SYSCALL`.
+
+Not done yet (needs hardware, accounts or certificates): an MDM-managed Mac, a signed and
+notarised build with the PPPC profile, a real SSH login, Screen Sharing session and failed
+sudo while the agent runs, CPU on macOS 14/15 and Intel, and the end-to-end check that these
+events arrive in Athena.

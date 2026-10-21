@@ -341,11 +341,16 @@ there is no `body`. The field reference is in [the macOS preset guide](presets/m
 id = "mac-audit"
 type = "macos_bsm"
 classes = ["lo", "aa"]
+exclude_events = ["AUE_MAC_SYSCALL"]
 ```
 
 | Field | Type | Default | Valid values and meaning |
 | --- | --- | --- | --- |
 | `classes` | list of strings | all | At most 32 audit class names from `/etc/security/audit_class` (`lo`, `aa`, `ad`, `ex`, ...). Only records whose event (per `/etc/security/audit_event`) is in one of them are sent. |
+| `exclude_events` | list of strings | none | At most 256 event names (`AUE_...`) to drop even when their class is kept. |
+
+Records are filtered by the event number in their header before they are converted, so
+left-out events cost almost nothing.
 
 What auditd writes to the trail is set by `flags` in `/etc/security/audit_control`; `classes`
 can only narrow it. Without a checkpoint the rule starts at the end of the current trail.
