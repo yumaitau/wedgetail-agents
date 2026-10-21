@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>au.com.yumait.wedgetail-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/wedgetail-agent</string>
+        <string>run</string>
+        <string>--config</string>
+        <string>/Library/Application Support/Wedgetail/agent.toml</string>
+    </array>
+    <!--
+        Runs as root: macOS `log stream` and `log show` refuse non-admin users, and adding a
+        service account to the admin group would also grant it sudo. The agent opens no
+        listener, runs no remote commands and only executes /usr/bin/log.
+    -->
+    <key>UserName</key>
+    <string>root</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/Wedgetail/agent.log</string>
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/Wedgetail/agent.log</string>
+</dict>
+</plist>

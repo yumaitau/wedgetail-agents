@@ -1,0 +1,64 @@
+[Unit]
+Description=Wedgetail host agent
+Documentation=https://github.com/yumaitau/wedgetail-agents
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/wedgetail-agent/agent.toml
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/wedgetail-agent run --config /etc/wedgetail-agent/agent.toml
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Dedicated unprivileged user (created by the package). adm reads /var/log/*.log,
+# systemd-journal reads the journal.
+User=wedgetail-agent
+Group=wedgetail-agent
+SupplementaryGroups=adm systemd-journal
+UMask=0077
+
+# State (disk buffer, checkpoints, status, credential) is the only writable path.
+StateDirectory=wedgetail-agent
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/wedgetail-agent
+
+# Resource limits. The agent targets < 2% CPU and < 50 MB RSS on an idle host; these are
+# ceilings, adjust with `systemctl edit wedgetail-agent`.
+CPUQuota=25%
+MemoryHigh=128M
+MemoryMax=256M
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Hardening.
+NoNewPrivileges=yes
+# No capabilities. Reading auditd logs needs CAP_DAC_READ_SEARCH: opt in with a drop-in
+# setting CapabilityBoundingSet=CAP_DAC_READ_SEARCH and AmbientCapabilities=CAP_DAC_READ_SEARCH.
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

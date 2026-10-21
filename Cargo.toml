@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = ["crates/agent-core", "crates/agent-collectors", "crates/agent-config", "crates/agent-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/yumaitau/wedgetail-agents"
+homepage = "https://github.com/yumaitau/wedgetail-agents"
+authors = ["Yuma IT <wedgetail@yumait.au>"]
+publish = false
+
+[workspace.dependencies]
+agent-collectors = { path = "crates/agent-collectors" }
+agent-config = { path = "crates/agent-config" }
+agent-core = { path = "crates/agent-core" }
+crc32fast = "1.5"
+fastrand = "2.3"
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+gethostname = "1"
+log = "0.4"
+quick-xml = "0.42"
+# ring as the only crypto provider: no OpenSSL, no aws-lc C/CMake toolchain for musl and cross builds.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+# rustls without its bundled webpki roots: certificates are verified by the OS (rustls-platform-verifier).
+ureq = { version = "3.1", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_EventLog", "Win32_System_Threading"] }
+windows-registry = "0.6"
+windows-service = "0.8"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+# The service manager restarts the agent; unwinding buys nothing and costs size.
+panic = "abort"
