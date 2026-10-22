@@ -63,9 +63,17 @@ channel, with no other right. The channel lists above are what GitHub's Windows 
 and 2025 runners report (`wevtutil gl`, printed by the CI end-to-end test); check yours with
 `wevtutil gl <channel>`.
 
-Add the service account to Event Log Readers once, as an administrator (the group is found by
-its well-known SID `S-1-5-32-573`, so this works on any display language), then restart the
-service so its new token carries the group:
+The MSI adds `NT AUTHORITY\LOCAL SERVICE` to Event Log Readers by default
+(`ADD_EVENT_LOG_READERS=1`, see
+[packaging/windows/README.md](../../packaging/windows/README.md#add_event_log_readers)), before
+the service starts, so after an MSI install there is nothing to do. `ADD_EVENT_LOG_READERS=0`
+leaves group membership alone, and uninstalling does not remove the member.
+
+When you install with `ADD_EVENT_LOG_READERS=0`, when the installer could not add the member
+(on a domain controller, for example; the install log says why), or when the agent runs from
+the zip or another install path, add the service account once, as an administrator (the group
+is found by its well-known SID `S-1-5-32-573`, so this works on any display language), then
+restart the service so its new token carries the group:
 
 ```powershell
 Add-LocalGroupMember -SID 'S-1-5-32-573' -Member 'NT AUTHORITY\LOCAL SERVICE'
@@ -73,7 +81,9 @@ Restart-Service WedgetailAgent
 ```
 
 With Group Policy: Computer Configuration > Preferences > Control Panel Settings > Local
-Users and Groups, update the built-in group "Event Log Readers" and add `LOCAL SERVICE`.
+Users and Groups, update the built-in group "Event Log Readers" and add `LOCAL SERVICE`. If
+you manage the group with Restricted Groups, include `LOCAL SERVICE` in its members (or the
+policy removes what the installer added) or install with `ADD_EVENT_LOG_READERS=0`.
 
 ### The Security channel
 
@@ -93,7 +103,8 @@ preference:
    object SACLs, which is exactly the tampering these presets exist to detect.
 
 The agent never changes group membership, channel access lists, audit policy or any other
-host setting itself; `wedgetail-agent status` only reports.
+host setting itself; `wedgetail-agent status` only reports. The only change made for it is the
+MSI's Event Log Readers membership above, which `ADD_EVENT_LOG_READERS=0` turns off.
 
 ## Audit policy and other host settings
 
