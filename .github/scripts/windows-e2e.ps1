@@ -100,7 +100,11 @@ function AppEvent($text) {
     if (-not [Diagnostics.EventLog]::SourceExists('WedgetailAgentE2E')) {
         [Diagnostics.EventLog]::CreateEventSource('WedgetailAgentE2E', 'Application')
     }
-    [Diagnostics.EventLog]::WriteEntry('WedgetailAgentE2E', $text, 'Information', 100)
+    # A newly registered source can take a moment to become writable (seen on Server 2025).
+    for ($i = 1; ; $i++) {
+        try { [Diagnostics.EventLog]::WriteEntry('WedgetailAgentE2E', $text, 'Information', 100); return }
+        catch { if ($i -ge 10) { throw }; Start-Sleep -Seconds 2 }
+    }
 }
 
 Section 'Least privilege, configuration and enrolment'
