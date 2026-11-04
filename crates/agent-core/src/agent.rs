@@ -241,7 +241,11 @@ impl Agent {
                 }
                 next_heartbeat = now + interval;
             }
-            if now >= next_status {
+            if now >= next_status
+                || metrics
+                    .collectors_changed
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
                 let fields = snapshot(&buffer, &metrics, &host, started, &presets);
                 write_status(&state_dir, &telemetry::status_json(&fields, &metrics));
                 next_status = now + STATUS_INTERVAL;
