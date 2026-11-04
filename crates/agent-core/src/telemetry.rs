@@ -1,7 +1,7 @@
 //! Self-telemetry: counters, collector health, the `agent.heartbeat` event and the local
 //! `status.json` read by `wedgetail-agent status`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
@@ -30,6 +30,9 @@ pub struct Metrics {
     pub sent_events: AtomicU64,
     pub sent_batches: AtomicU64,
     pub collectors: Mutex<Vec<CollectorHealth>>,
+    /// Set when a collector changes state, so the status file is rewritten without waiting
+    /// for the next interval.
+    pub collectors_changed: AtomicBool,
     pub last_ship: Mutex<ShipStatus>,
 }
 
@@ -78,6 +81,7 @@ impl Metrics {
             .get_mut(idx)
         {
             h.state = "running".into();
+            self.collectors_changed.store(true, Ordering::Relaxed);
         }
     }
 
@@ -91,6 +95,7 @@ impl Metrics {
             h.state = "error".into();
             h.errors += 1;
             h.last_error = Some(error.chars().take(MAX_ERROR_CHARS).collect());
+            self.collectors_changed.store(true, Ordering::Relaxed);
         }
     }
 
