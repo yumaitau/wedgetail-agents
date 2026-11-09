@@ -161,18 +161,14 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # The role end-to-end test runs nightly only: .github/workflows/e2e-nightly.yml
   ansible:
     name: ansible (role, ubuntu 24.04)
-    needs: linux-packages
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: linux-x86_64-unknown-linux-musl
-          path: dist
       - name: Ansible and ansible-lint
         run: |
           python3 -m venv "$RUNNER_TEMP/ansible"
@@ -181,12 +177,6 @@ jobs:
       - name: ansible-lint (production profile)
         working-directory: ansible
         run: ansible-lint
-      # Install from a local "release", enrol against the mock ingest, idempotency, purge.
-      - name: Role end to end (this runner, systemd)
-        run: .github/scripts/ansible-e2e.sh dist
-      - name: Agent journal
-        if: always()
-        run: sudo journalctl -u wedgetail-agent --no-pager -n 100 || true
 
   windows-msi:
     name: windows (msi, ${{ matrix.runner }})
@@ -255,14 +245,8 @@ jobs:
           Start-Sleep -Seconds 3
           if ((Get-Service WedgetailAgent).Status -ne 'Running') { throw "service stopped after an invalid reload" }
           if (-not (Select-String -Path "$env:ProgramData\Wedgetail\state\agent.log" -Pattern 'keeping the running configuration' -Quiet)) { throw "invalid reload not logged" }
-      # Presets end to end against a mock endpoint: enrol, ship, restart, no loss or duplicates.
-      - name: Presets end to end (mock ingest)
-        shell: pwsh
-        run: .github/scripts/windows-e2e.ps1
-      # ENDPOINT, PRESETS and ENROLTOKEN (reinstalls from a clean state).
-      - name: MSI properties end to end (mock ingest)
-        shell: pwsh
-        run: .github/scripts/windows-msi-properties.ps1 dist/wedgetail-agent-x86_64.msi
+      # The presets and MSI properties end-to-end tests run nightly only:
+      # .github/workflows/e2e-nightly.yml
       - name: Agent log
         if: always()
         shell: pwsh
@@ -287,8 +271,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS 14 and 15 on Apple silicon, 15 on Intel, and the current release.
-        runner: [macos-14, macos-15, macos-15-intel, macos-latest]
+        # macOS 15 on Apple silicon and Intel, and the current release. GitHub no longer
+        # offers the macos-14 image ("configuration 'macos-14-arm64-us-default' is not
+        # supported"), so macOS 14 is not covered here.
+        runner: [macos-15, macos-15-intel, macos-latest]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

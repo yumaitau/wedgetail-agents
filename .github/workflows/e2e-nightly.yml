@@ -1,0 +1,146 @@
+name: E2E nightly
+
+# End-to-end tests against the mock ingest endpoint run here only, never in push or pull
+# request CI.
+on:
+  schedule:
+    - cron: '0 15 * * *' # 02:00 AEDT
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  ansible-e2e:
+    name: ansible e2e (role, ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: musl C toolchain (for ring)
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Rust toolchain
+        run: rustup toolchain install && rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: x86_64-unknown-linux-musl
+      - name: Static build
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deb
+      - name: Build .deb
+        run: |
+          cargo deb -p agent-cli --target x86_64-unknown-linux-musl --no-build --no-strip
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/debian/*.deb dist/
+          ls -l dist
+      - name: Ansible
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible"
+          "$RUNNER_TEMP/ansible/bin/pip" install --quiet ansible-core==2.21.5
+          echo "$RUNNER_TEMP/ansible/bin" >> "$GITHUB_PATH"
+      # Install from a local "release", enrol against the mock ingest, idempotency, purge.
+      - name: Role end to end (this runner, systemd)
+        run: .github/scripts/ansible-e2e.sh dist
+      - name: Agent journal
+        if: always()
+        run: sudo journalctl -u wedgetail-agent --no-pager -n 100 || true
+
+  windows-e2e:
+    name: windows e2e (msi, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows Server 2022 and 2025 (windows-latest).
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.runner }}
+      - name: Build (agent and MSI custom action DLL)
+        run: cargo build --locked --release --workspace
+      - name: WiX
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build the MSI
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          wix build packaging/windows/wedgetail-agent.wxs -arch x64 `
+            -d Version=0.1.0 -d BinPath=target/release/wedgetail-agent.exe `
+            -d CaPath=target/release/wedgetail_msi.dll `
+            -d ConfigPath=packaging/common/agent.toml -o dist/wedgetail-agent-x86_64.msi
+      - name: Install, start and reload the service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Start-Process msiexec -ArgumentList '/i', 'dist\wedgetail-agent-x86_64.msi', '/qn', '/l*v', 'install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 50; throw "install failed: $($p.ExitCode)" }
+          sc.exe qc WedgetailAgent
+          icacls "$env:ProgramData\Wedgetail\state"
+          icacls "$env:ProgramData\Wedgetail\agent.toml"
+          # Without ENDPOINT the service is not started; ADD_EVENT_LOG_READERS defaults to 1.
+          if ((Get-Service WedgetailAgent).Status -ne 'Stopped') { throw 'a plain install started the service' }
+          if (-not (Get-LocalGroupMember -SID 'S-1-5-32-573' | Where-Object { $_.SID.Value -eq 'S-1-5-19' })) { throw 'LOCAL SERVICE is not in Event Log Readers' }
+          $config = "endpoint = `"https://ingest.example.invalid`"`n[[rule]]`nid = `"app`"`ntype = `"wineventlog`"`nchannel = `"Application`"`n"
+          Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value $config -Encoding utf8NoBOM
+          & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" check-config
+          if ($LASTEXITCODE -ne 0) { throw "check-config failed" }
+          Start-Service WedgetailAgent
+          Start-Sleep -Seconds 8
+          $svc = Get-Service WedgetailAgent
+          if ($svc.Status -ne 'Running') { Get-Content "$env:ProgramData\Wedgetail\state\agent.log" -ErrorAction SilentlyContinue; throw "service is $($svc.Status)" }
+          Get-Content "$env:ProgramData\Wedgetail\state\agent.log"
+          & "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe" status
+          $status = Get-Content "$env:ProgramData\Wedgetail\state\status.json" -Raw | ConvertFrom-Json
+          # The Windows presets load first ("auto"); find the rule from agent.toml by id.
+          $app = $status.collectors | Where-Object rule_id -eq 'app'
+          if ($app.state -ne 'running') { throw "collector is $($app.state): $($app.last_error)" }
+          # Reload through the service control: valid changes apply, invalid ones are refused.
+          $config = "endpoint = `"https://ingest.example.invalid`"`n[[rule]]`nid = `"app`"`ntype = `"wineventlog`"`nchannel = `"Application`"`n[[rule]]`nid = `"system`"`ntype = `"wineventlog`"`nchannel = `"System`"`n"
+          Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value $config -Encoding utf8NoBOM
+          sc.exe control WedgetailAgent paramchange
+          if ($LASTEXITCODE -ne 0) { throw "paramchange failed" }
+          Start-Sleep -Seconds 8
+          $status = Get-Content "$env:ProgramData\Wedgetail\state\status.json" -Raw | ConvertFrom-Json
+          if (-not ($status.collectors.rule_id -contains 'system')) { throw "reload not applied" }
+          Set-Content -Path "$env:ProgramData\Wedgetail\agent.toml" -Value "[[rule]]`nid = `"Bad Id`"`n" -Encoding utf8NoBOM
+          sc.exe control WedgetailAgent paramchange
+          Start-Sleep -Seconds 3
+          if ((Get-Service WedgetailAgent).Status -ne 'Running') { throw "service stopped after an invalid reload" }
+          if (-not (Select-String -Path "$env:ProgramData\Wedgetail\state\agent.log" -Pattern 'keeping the running configuration' -Quiet)) { throw "invalid reload not logged" }
+      # Presets end to end against a mock endpoint: enrol, ship, restart, no loss or duplicates.
+      - name: Presets end to end (mock ingest)
+        shell: pwsh
+        run: .github/scripts/windows-e2e.ps1
+      # ENDPOINT, PRESETS and ENROLTOKEN (reinstalls from a clean state).
+      - name: MSI properties end to end (mock ingest)
+        shell: pwsh
+        run: .github/scripts/windows-msi-properties.ps1 dist/wedgetail-agent-x86_64.msi
+      - name: Agent log
+        if: always()
+        shell: pwsh
+        run: Get-Content "$env:ProgramData\Wedgetail\state\agent.log" -Tail 200 -ErrorAction SilentlyContinue
+      - name: Stop and uninstall the service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Stop-Service WedgetailAgent -ErrorAction SilentlyContinue
+          $p = Start-Process msiexec -ArgumentList '/x', 'dist\wedgetail-agent-x86_64.msi', '/qn', '/l*v', 'uninstall.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content uninstall.log -Tail 50; throw "uninstall failed: $($p.ExitCode)" }
+          if (Get-Service WedgetailAgent -ErrorAction SilentlyContinue) { throw "service still installed" }
+          if (Test-Path "$env:ProgramFiles\Wedgetail Agent\wedgetail-agent.exe") { throw "binary still installed" }
