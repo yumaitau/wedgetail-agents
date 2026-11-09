@@ -271,8 +271,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS 14 and 15 on Apple silicon, 15 on Intel, and the current release.
-        runner: [macos-14, macos-15, macos-15-intel, macos-latest]
+        # macOS 15 on Apple silicon and Intel, and the current release. GitHub no longer
+        # offers the macos-14 image ("configuration 'macos-14-arm64-us-default' is not
+        # supported"), so macOS 14 is not covered here.
+        runner: [macos-15, macos-15-intel, macos-latest]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
